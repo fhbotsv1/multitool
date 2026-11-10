@@ -33,12 +33,16 @@ A native Android video downloader built with Kotlin and Jetpack Compose, using y
 - [x] Stable yt-dlp updater available through the library
 - [ ] Cancellation and persistent background downloads
 
-**Stage 7A — Persistent download history**
+**Stage 7 — Download queue and history**
 - [x] Save completed download records locally across app restarts
 - [x] Display title, date, saved location and file size when available
 - [x] Open and share completed files using Android content URIs
 - [x] Remove one history record or clear history without deleting downloaded media
-- [ ] Download queue and retry of failed downloads (Stage 7B)
+- [x] Add multiple videos to a persistent queue
+- [x] Process queued downloads sequentially
+- [x] Retry failed downloads
+- [x] Remove queue entries and clear completed entries
+- [x] Recover interrupted queue items as queued after app restart
 
 **Stage 6 — Source codec and size estimate**
 - [x] Display video codecs reported by the source website
@@ -57,7 +61,7 @@ A native Android video downloader built with Kotlin and Jetpack Compose, using y
 - [ ] Verify `libx265` availability and conversion behavior on target devices
 
 **Planned later stages**
-- [ ] Download queue, pause/resume/cancel and history
+- [ ] Pause/resume/cancel and persistent background downloads
 - [ ] Persistent background downloads and notifications
 - [ ] Improved format/codec controls and user-configurable HEVC quality
 - [ ] Download history and file management
