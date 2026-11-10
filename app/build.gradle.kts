@@ -12,8 +12,8 @@ android {
         applicationId = "com.fhbotsv1.ytdlpapp"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.7.0"
+        versionCode = 8
+        versionName = "0.8.0"
 
         ndk {
             abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64"))
@@ -52,6 +52,8 @@ dependencies {
     implementation(libs.youtubedlAndroid)
     implementation(libs.youtubedlAndroidFfmpeg)
     implementation(libs.coilCompose)
+    implementation(libs.androidx.work.runtime)
+    implementation(libs.androidx.lifecycle.livedata.compose)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
