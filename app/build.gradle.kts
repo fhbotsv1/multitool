@@ -53,7 +53,7 @@ dependencies {
     implementation(libs.youtubedlAndroidFfmpeg)
     implementation(libs.coilCompose)
     implementation(libs.androidx.work.runtime)
-    implementation(libs.androidx.lifecycle.livedata.compose)
+    implementation(libs.androidx.compose.runtime.livedata)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
