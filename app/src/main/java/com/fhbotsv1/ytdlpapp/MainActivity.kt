@@ -1097,6 +1097,10 @@ private suspend fun performQueuedDownload(context: android.content.Context, item
             if (quality == QualityMode.BEST_EFFICIENT) addOption("-S", "vcodec:av01,res,br")
         }
         YoutubeDL.getInstance().execute(request, "ytdlp-" + item.id) { p, eta, line ->
+            val command = getQueueControl(context)
+            if (command == "pause" || command == "cancel_current") {
+                runCatching { YoutubeDL.getInstance().destroyProcessById("ytdlp-" + item.id) }
+            }
             onProgress(if (codec == OutputCodec.HEVC) p.coerceIn(0f, 100f) * 0.5f else p.coerceIn(0f, 100f), eta, line)
         }
         val source = outputDir.listFiles()?.filter { it.isFile && it.name !in before && !it.name.endsWith(".part", true) && !it.name.endsWith(".ytdl", true) && !it.name.endsWith(".temp", true) }?.maxByOrNull { it.lastModified() }
