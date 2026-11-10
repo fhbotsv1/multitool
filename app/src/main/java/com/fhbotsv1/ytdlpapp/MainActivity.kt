@@ -19,11 +19,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.NetworkType
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.compose.runtime.LaunchedEffect
@@ -930,7 +932,8 @@ private const val DOWNLOAD_NOTIFICATION_ID = 7101
 private const val DOWNLOAD_COMPLETION_NOTIFICATION_ID = 7102
 
 private fun enqueueDownloadQueue(workManager: WorkManager) {
-    val request = OneTimeWorkRequestBuilder<DownloadQueueWorker>().build()
+    val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+    val request = OneTimeWorkRequestBuilder<DownloadQueueWorker>().setConstraints(constraints).build()
     workManager.enqueueUniqueWork(QUEUE_WORK_NAME, ExistingWorkPolicy.KEEP, request)
 }
 
