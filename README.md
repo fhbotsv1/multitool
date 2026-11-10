@@ -27,7 +27,21 @@ A native Android video downloader built with Kotlin and Jetpack Compose, using y
 - [x] Manual maximum resolution, populated from resolutions reported by the source
 - [x] Independent Original / HEVC (H.265) output choice
 - [x] Selection summary and format-selection plan
-- [ ] Pass the selected options to the download engine (next stage)
+- [x] Start yt-dlp downloads using selected quality mode
+- [x] Download progress and ETA reporting
+- [x] FFmpeg runtime added for separate-stream merging
+- [x] Publish completed downloads into Android Downloads on Android 10+
+- [ ] Cancellation and persistent background downloads (later stage)
+
+**Stage 4 — Download execution (initial implementation)**
+
+- Downloads run on an IO coroutine with yt-dlp progress updates.
+- Best Available uses yt-dlp's best video + best audio selection.
+- Best Efficient applies yt-dlp codec/resolution/bitrate sorting with AV1 preference where available; this is a preference, not a guarantee of smallest output.
+- Manual Resolution applies the chosen maximum height.
+- FFmpeg is initialized so yt-dlp can merge separate audio/video streams.
+- On Android 10+, completed output is copied into `Downloads/YTDLP Downloader` through MediaStore. On Android 8–9, this first implementation keeps the file in app-specific external storage.
+- HEVC selection is shown, but transcoding is deliberately deferred to Stage 5.
 
 **Planned later stages**
 
