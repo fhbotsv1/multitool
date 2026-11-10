@@ -1167,6 +1167,8 @@ class DownloadQueueWorker(appContext: Context, params: WorkerParameters) : Corou
                             if (line.isNotBlank()) line.take(100) else "Downloading: ${item.title}", safeProgress.toInt()))
                     }
                 }
+                // Clear a late cancel request so it cannot accidentally affect the next queue item.
+                setQueueControl(applicationContext, "")
                 val size = runCatching {
                     applicationContext.contentResolver.openFileDescriptor(Uri.parse(outcome.uri), "r")?.use { it.statSize }?.takeIf { it > 0L }
                         ?: outcome.location.takeIf { it.startsWith("/") }?.let { File(it).length() } ?: 0L
