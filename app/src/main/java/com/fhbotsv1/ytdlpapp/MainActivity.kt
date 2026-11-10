@@ -1091,8 +1091,9 @@ private suspend fun performQueuedDownload(context: android.content.Context, item
         val outputDir = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir, "ytdlp-stage4").apply { mkdirs() }
         val before = outputDir.listFiles()?.map { it.name }?.toSet().orEmpty()
         val request = YoutubeDLRequest(item.url).apply {
-            addOption("--no-playlist"); addOption("--no-mtime"); addOption("--newline")
-            addOption("-o", File(outputDir, "%(title).180B [%(id)s]-%(epoch)s.%(ext)s").absolutePath)
+            addOption("--no-playlist"); addOption("--no-mtime"); addOption("--newline"); addOption("--continue")
+            // Keep the output name stable for this queue item so yt-dlp can resume its .part file.
+            addOption("-o", File(outputDir, "${item.id}-%(title).180B [%(id)s].%(ext)s").absolutePath)
             addOption("-f", buildFormatSelector(quality, item.manualResolution))
             if (quality == QualityMode.BEST_EFFICIENT) addOption("-S", "vcodec:av01,res,br")
         }
