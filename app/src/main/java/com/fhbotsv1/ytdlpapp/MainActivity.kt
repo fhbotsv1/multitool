@@ -372,12 +372,14 @@ private fun DownloaderHome() {
                                 url = selectedUrl,
                                 location = saved.location,
                                 uri = saved.uri,
-                                sizeBytes = saved.location.let { location ->
-                                    runCatching {
-                                        if (location.startsWith("/")) File(location).length()
-                                        else 0L
-                                    }.getOrDefault(0L)
-                                },
+                                sizeBytes = runCatching {
+                                    appContext.contentResolver.openFileDescriptor(
+                                        Uri.parse(saved.uri), "r"
+                                    )?.use { descriptor -> descriptor.statSize }?.takeIf { it > 0L }
+                                        ?: saved.location.takeIf { it.startsWith("/") }
+                                            ?.let { File(it).length() }
+                                        ?: 0L
+                                }.getOrDefault(0L),
                                 createdAt = System.currentTimeMillis(),
                                 status = saved.status
                             )
