@@ -19,8 +19,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -45,6 +49,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private enum class QualityMode(val label: String) {
+    BEST_AVAILABLE("Best Available"),
+    BEST_EFFICIENT("Best Efficient"),
+    MANUAL("Manual Resolution")
+}
+
+private enum class OutputCodec(val label: String) {
+    ORIGINAL("Original"),
+    HEVC("HEVC / H.265")
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,6 +83,9 @@ private fun DownloaderHome() {
     var isLoading by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf("Paste a video link to get started.") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var qualityMode by remember { mutableStateOf(QualityMode.BEST_AVAILABLE) }
+    var outputCodec by remember { mutableStateOf(OutputCodec.ORIGINAL) }
+    var manualResolution by remember { mutableStateOf(1080) }
     val scope = rememberCoroutineScope()
     val appContext = LocalContext.current.applicationContext
 
@@ -127,7 +145,13 @@ private fun DownloaderHome() {
                                         YoutubeDL.getInfo(request)
                                     }
                                     videoInfo = result
-                                    statusMessage = "Video information loaded successfully."
+                                    val heights = result.formats.orEmpty()
+                                        .mapNotNull { it.height.takeIf { height -> height > 0 } }
+                                        .distinct().sortedDescending()
+                                    if (heights.isNotEmpty() && manualResolution !in heights) {
+                                        manualResolution = heights.first()
+                                    }
+                                    statusMessage = "Video information loaded. Choose quality and output codec below."
                                 } catch (exception: Exception) {
                                     errorMessage = exception.message?.lineSequence()
                                         ?.firstOrNull()?.take(350)
@@ -192,6 +216,21 @@ private fun DownloaderHome() {
         videoInfo?.let { info ->
             VideoDetailsCard(info)
             AvailableFormatsCard(info.formats.orEmpty())
+            DownloadSettingsCard(
+                formats = info.formats.orEmpty(),
+                qualityMode = qualityMode,
+                onQualityModeChange = { qualityMode = it },
+                outputCodec = outputCodec,
+                onOutputCodecChange = { outputCodec = it },
+                manualResolution = manualResolution,
+                onManualResolutionChange = { manualResolution = it }
+            )
+            SelectionSummaryCard(
+                qualityMode = qualityMode,
+                outputCodec = outputCodec,
+                manualResolution = manualResolution,
+                formats = info.formats.orEmpty()
+            )
         }
 
         Card(modifier = Modifier.fillMaxWidth()) {
@@ -200,17 +239,6 @@ private fun DownloaderHome() {
                 Text("Status", style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold)
                 Text(statusMessage, style = MaterialTheme.typography.bodyMedium)
-            }
-        }
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Download settings", style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold)
-                SettingLine("Quality", "Best Available (selection comes next)")
-                SettingLine("Output codec", "Original (HEVC option comes later)")
-                SettingLine("Audio", "Preserve original where possible")
             }
         }
 
@@ -292,6 +320,139 @@ private fun FormatLine(format: VideoFormat) {
         Text("$videoCodec / $audioCodec$sizeText",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun DownloadSettingsCard(
+    formats: List<VideoFormat>,
+    qualityMode: QualityMode,
+    onQualityModeChange: (QualityMode) -> Unit,
+    outputCodec: OutputCodec,
+    onOutputCodecChange: (OutputCodec) -> Unit,
+    manualResolution: Int,
+    onManualResolutionChange: (Int) -> Unit
+) {
+    val resolutions = remember(formats) {
+        formats.mapNotNull { it.height.takeIf { height -> height > 0 } }
+            .distinct().sortedDescending()
+    }
+    var resolutionMenuExpanded by remember { mutableStateOf(false) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Download settings", style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold)
+            Text("Quality", style = MaterialTheme.typography.titleSmall)
+            QualityMode.values().forEach { mode ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(
+                        selected = qualityMode == mode,
+                        onClick = { onQualityModeChange(mode) }
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(mode.label, fontWeight = FontWeight.Medium)
+                        Text(
+                            when (mode) {
+                                QualityMode.BEST_AVAILABLE -> "Choose the highest source quality and best available audio."
+                                QualityMode.BEST_EFFICIENT -> "Prefer efficient source codecs such as AV1 when available, without forcing a fixed resolution cap."
+                                QualityMode.MANUAL -> "Choose a resolution actually offered by this video."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            if (qualityMode == QualityMode.MANUAL) {
+                Text("Maximum resolution", style = MaterialTheme.typography.labelLarge)
+                if (resolutions.isEmpty()) {
+                    Text("This link did not report selectable video resolutions.")
+                } else {
+                    OutlinedButton(
+                        onClick = { resolutionMenuExpanded = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (manualResolution in resolutions) "${manualResolution}p" else "${resolutions.first()}p")
+                    }
+                    DropdownMenu(
+                        expanded = resolutionMenuExpanded,
+                        onDismissRequest = { resolutionMenuExpanded = false }
+                    ) {
+                        resolutions.forEach { height ->
+                            DropdownMenuItem(
+                                text = { Text("${height}p") },
+                                onClick = {
+                                    onManualResolutionChange(height)
+                                    resolutionMenuExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            Text("Output video codec", style = MaterialTheme.typography.titleSmall)
+            OutputCodec.values().forEach { codec ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(
+                        selected = outputCodec == codec,
+                        onClick = { onOutputCodecChange(codec) }
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(codec.label, fontWeight = FontWeight.Medium)
+                        Text(
+                            if (codec == OutputCodec.ORIGINAL)
+                                "Keep the downloaded video stream unchanged; no video re-encoding."
+                            else
+                                "Convert the downloaded video to H.265 using FFmpeg in a later stage."
+                            ,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            Text("Audio will be preserved and copied where compatible.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun SelectionSummaryCard(
+    qualityMode: QualityMode,
+    outputCodec: OutputCodec,
+    manualResolution: Int,
+    formats: List<VideoFormat>
+) {
+    val selector = when (qualityMode) {
+        QualityMode.BEST_AVAILABLE -> "bestvideo+bestaudio/best"
+        QualityMode.BEST_EFFICIENT -> "bestvideo+bestaudio/best (prefer AV1, then resolution and audio quality)"
+        QualityMode.MANUAL -> "bestvideo[height<=$manualResolution]+bestaudio/best[height<=$manualResolution]"
+    }
+    val manualAvailable = formats.any { it.height == manualResolution && it.height > 0 }
+    Card(modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Column(modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Current selection", style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold)
+            SettingLine("Quality mode", if (qualityMode == QualityMode.MANUAL) "Manual · ${manualResolution}p" else qualityMode.label)
+            SettingLine("Video output", outputCodec.label)
+            SettingLine("Format selection plan", selector)
+            if (qualityMode == QualityMode.MANUAL && !manualAvailable) {
+                Text("The selected resolution is not listed as a separate format; yt-dlp will use the best available format up to this resolution.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            if (outputCodec == OutputCodec.HEVC) {
+                Text("HEVC conversion is selected but is not performed yet. It will be added with FFmpeg in Stage 5.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        }
     }
 }
 
