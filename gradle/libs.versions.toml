@@ -24,7 +24,7 @@ youtubedlAndroid = { group = "io.github.junkfood02.youtubedl-android", name = "l
 youtubedlAndroidFfmpeg = { group = "io.github.junkfood02.youtubedl-android", name = "ffmpeg", version.ref = "youtubedlAndroid" }
 coilCompose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 androidx-work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
-androidx-lifecycle-livedata-compose = { group = "androidx.lifecycle", name = "lifecycle-livedata-compose", version.ref = "lifecycle" }
+androidx-compose-runtime-livedata = { group = "androidx.compose.runtime", name = "runtime-livedata" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
