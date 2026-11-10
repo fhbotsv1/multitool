@@ -1,14 +1,35 @@
 package com.fhbotsv1.ytdlpapp
 
+import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.os.Bundle
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import androidx.work.CoroutineWorker
+import androidx.work.Data
+import androidx.work.ExistingWorkPolicy
+import androidx.work.ForegroundInfo
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.livedata.observeAsState
 import java.io.File
 import java.net.URLConnection
-import android.os.Bundle
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -58,6 +79,7 @@ import com.yausername.youtubedl_android.mapper.VideoFormat
 import com.yausername.youtubedl_android.mapper.VideoInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 private enum class QualityMode(val label: String) {
@@ -103,22 +125,29 @@ private fun DownloaderHome() {
     var videoUrl by remember { mutableStateOf("") }
     var videoInfo by remember { mutableStateOf<VideoInfo?>(null) }
     var isLoading by remember { mutableStateOf(false) }
-    var isDownloading by remember { mutableStateOf(false) }
-    var downloadProgress by remember { mutableStateOf(0f) }
-    var downloadEta by remember { mutableStateOf<Long?>(null) }
-    var downloadStatus by remember { mutableStateOf("No download started.") }
     var downloadedLocation by remember { mutableStateOf<String?>(null) }
     var statusMessage by remember { mutableStateOf("Paste a video link to get started.") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var qualityMode by remember { mutableStateOf(QualityMode.BEST_AVAILABLE) }
     var outputCodec by remember { mutableStateOf(OutputCodec.ORIGINAL) }
     var manualResolution by remember { mutableStateOf(1080) }
-    val scope = rememberCoroutineScope()
     val appContext = LocalContext.current.applicationContext
     val context = LocalContext.current
+    val workManager = remember { WorkManager.getInstance(appContext) }
+    val workInfos by workManager.getWorkInfosForUniqueWorkLiveData(QUEUE_WORK_NAME).observeAsState()
+    val activeWorkInfo = workInfos?.firstOrNull { it.state == androidx.work.WorkInfo.State.RUNNING || it.state == androidx.work.WorkInfo.State.ENQUEUED || it.state == androidx.work.WorkInfo.State.BLOCKED }
+    val isQueueRunning = activeWorkInfo != null
+    val isDownloading = isQueueRunning
+    val downloadProgress = activeWorkInfo?.progress?.getFloat("progress", 0f) ?: 0f
+    val downloadEta = activeWorkInfo?.progress?.getLong("eta", 0L)?.takeIf { it > 0L }
+    val downloadStatus = activeWorkInfo?.progress?.getString("status") ?: if (isQueueRunning) "Preparing background download…" else "No download started."
     var history by remember { mutableStateOf(loadDownloadHistory(appContext)) }
     var downloadQueue by remember { mutableStateOf(loadDownloadQueue(appContext)) }
-    var isQueueRunning by remember { mutableStateOf(false) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { enqueueDownloadQueue(workManager) }
+    LaunchedEffect(workInfos) {
+        downloadQueue = loadDownloadQueue(appContext)
+        history = loadDownloadHistory(appContext)
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -302,52 +331,10 @@ private fun DownloaderHome() {
             currentStatus = downloadStatus,
             onStart = {
                 if (!isQueueRunning && downloadQueue.any { it.status == "Queued" }) {
-                    isQueueRunning = true
-                    scope.launch {
-                        while (true) {
-                            val next = downloadQueue.firstOrNull { it.status == "Queued" } ?: break
-                            downloadQueue = downloadQueue.map { if (it.id == next.id) it.copy(status = "Downloading", error = "") else it }
-                            saveDownloadQueue(appContext, downloadQueue)
-                            isDownloading = true
-                            downloadProgress = 0f
-                            downloadEta = null
-                            try {
-                                val outcome = withContext(Dispatchers.IO) {
-                                    performQueuedDownload(appContext, next) { p, eta, line ->
-                                        scope.launch {
-                                            downloadProgress = p
-                                            downloadEta = eta
-                                            if (line.isNotBlank()) downloadStatus = line.take(180)
-                                        }
-                                    }
-                                }
-                                val size = runCatching {
-                                    appContext.contentResolver.openFileDescriptor(Uri.parse(outcome.uri), "r")?.use { it.statSize }?.takeIf { it > 0L }
-                                        ?: outcome.location.takeIf { it.startsWith("/") }?.let { File(it).length() } ?: 0L
-                                }.getOrDefault(0L)
-                                val record = DownloadHistoryItem(
-                                    id = System.currentTimeMillis().toString(), title = next.title, url = next.url,
-                                    location = outcome.location, uri = outcome.uri, sizeBytes = size,
-                                    createdAt = System.currentTimeMillis(), status = outcome.status
-                                )
-                                history = (listOf(record) + history).take(100)
-                                saveDownloadHistory(appContext, history)
-                                downloadQueue = downloadQueue.map { if (it.id == next.id) it.copy(status = "Completed", error = "") else it }
-                                downloadedLocation = outcome.location
-                                downloadProgress = 100f
-                                downloadStatus = outcome.status
-                            } catch (e: Exception) {
-                                val message = e.message?.lineSequence()?.firstOrNull()?.take(250) ?: "Download failed."
-                                downloadQueue = downloadQueue.map { if (it.id == next.id) it.copy(status = "Failed", error = message) else it }
-                                downloadStatus = "Failed: " + message
-                            } finally {
-                                saveDownloadQueue(appContext, downloadQueue)
-                                isDownloading = false
-                            }
-                        }
-                        isQueueRunning = false
-                        downloadStatus = if (downloadQueue.any { it.status == "Failed" }) "Queue finished. Retry failed items when ready." else "Download queue completed."
-                    }
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                    ) notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    else enqueueDownloadQueue(workManager)
                 }
             },
             onRetry = { item ->
@@ -936,6 +923,15 @@ private data class QueueDownloadItem(
     val status: String, val error: String
 )
 
+private const val QUEUE_WORK_NAME = "ytdlp-download-queue"
+private const val DOWNLOAD_NOTIFICATION_CHANNEL = "ytdlp_downloads"
+private const val DOWNLOAD_NOTIFICATION_ID = 7101
+
+private fun enqueueDownloadQueue(workManager: WorkManager) {
+    val request = OneTimeWorkRequestBuilder<DownloadQueueWorker>().build()
+    workManager.enqueueUniqueWork(QUEUE_WORK_NAME, ExistingWorkPolicy.KEEP, request)
+}
+
 private fun loadDownloadQueue(context: android.content.Context): List<QueueDownloadItem> = runCatching {
     val raw = context.getSharedPreferences("download_queue", android.content.Context.MODE_PRIVATE).getString("items", "[]") ?: "[]"
     val array = org.json.JSONArray(raw)
@@ -946,7 +942,7 @@ private fun loadDownloadQueue(context: android.content.Context): List<QueueDownl
             id = o.optString("id"), url = o.optString("url"), title = o.optString("title", "Video"),
             qualityMode = o.optString("qualityMode", "BEST_AVAILABLE"), outputCodec = o.optString("outputCodec", "ORIGINAL"),
             manualResolution = o.optInt("manualResolution", 1080), durationSeconds = o.optLong("durationSeconds"),
-            status = if (status == "Downloading") "Queued" else status, error = o.optString("error")
+            status = status, error = o.optString("error")
         )
     }
 }.getOrDefault(emptyList())
@@ -1030,6 +1026,91 @@ private suspend fun performQueuedDownload(context: android.content.Context, item
         }
     }
 }
+
+private class DownloadQueueWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
+    override suspend fun doWork(): Result {
+        createDownloadNotificationChannel(applicationContext)
+        var queue = loadDownloadQueue(applicationContext).map { if (it.status == "Downloading") it.copy(status = "Queued") else it }
+        saveDownloadQueue(applicationContext, queue)
+        val pending = queue.filter { it.status == "Queued" }
+        if (pending.isEmpty()) return Result.success()
+        setForeground(createDownloadForegroundInfo(applicationContext, "Starting download queue…", 0))
+        var completed = 0
+        var failed = 0
+        for (item in pending) {
+            if (isStopped) {
+                queue = loadDownloadQueue(applicationContext).map { if (it.status == "Downloading") it.copy(status = "Queued") else it }
+                saveDownloadQueue(applicationContext, queue)
+                return Result.retry()
+            }
+            queue = loadDownloadQueue(applicationContext).map { if (it.id == item.id) it.copy(status = "Downloading", error = "") else it }
+            saveDownloadQueue(applicationContext, queue)
+            setProgress(Data.Builder().putFloat("progress", 0f).putLong("eta", 0L)
+                .putString("status", "Downloading ${item.title}").putString("currentTitle", item.title).build())
+            setForeground(createDownloadForegroundInfo(applicationContext, "Downloading: ${item.title}", 0))
+            try {
+                val outcome = performQueuedDownload(applicationContext, item) { progress, eta, line ->
+                    val safeProgress = progress.coerceIn(0f, 100f)
+                    runBlocking {
+                        setProgress(Data.Builder().putFloat("progress", safeProgress).putLong("eta", eta ?: 0L)
+                            .putString("status", line.take(180)).putString("currentTitle", item.title).build())
+                        setForeground(createDownloadForegroundInfo(applicationContext,
+                            if (line.isNotBlank()) line.take(100) else "Downloading: ${item.title}", safeProgress.toInt()))
+                    }
+                }
+                val size = runCatching {
+                    applicationContext.contentResolver.openFileDescriptor(Uri.parse(outcome.uri), "r")?.use { it.statSize }?.takeIf { it > 0L }
+                        ?: outcome.location.takeIf { it.startsWith("/") }?.let { File(it).length() } ?: 0L
+                }.getOrDefault(0L)
+                val record = DownloadHistoryItem(System.currentTimeMillis().toString(), item.title, item.url,
+                    outcome.location, outcome.uri, size, System.currentTimeMillis(), outcome.status)
+                saveDownloadHistory(applicationContext, (listOf(record) + loadDownloadHistory(applicationContext)).take(100))
+                queue = loadDownloadQueue(applicationContext).map { if (it.id == item.id) it.copy(status = "Completed", error = "") else it }
+                saveDownloadQueue(applicationContext, queue)
+                completed++
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                queue = loadDownloadQueue(applicationContext).map { if (it.id == item.id && it.status == "Downloading") it.copy(status = "Queued") else it }
+                saveDownloadQueue(applicationContext, queue)
+                throw cancelled
+            } catch (e: Exception) {
+                val message = e.message?.lineSequence()?.firstOrNull()?.take(250) ?: "Download failed."
+                queue = loadDownloadQueue(applicationContext).map { if (it.id == item.id) it.copy(status = "Failed", error = message) else it }
+                saveDownloadQueue(applicationContext, queue)
+                failed++
+            }
+        }
+        val summary = if (failed == 0) "Queue completed · ${completed} downloaded" else "Queue finished · ${completed} downloaded · ${failed} failed"
+        setProgress(Data.Builder().putFloat("progress", 100f).putString("status", summary).build())
+        val manager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(DOWNLOAD_NOTIFICATION_ID, buildDownloadNotification(applicationContext, summary, 100, false))
+        return Result.success()
+    }
+}
+
+private fun createDownloadNotificationChannel(context: Context) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.createNotificationChannel(NotificationChannel(DOWNLOAD_NOTIFICATION_CHANNEL, "Video downloads", NotificationManager.IMPORTANCE_LOW)
+            .apply { description = "Shows background video download progress and completion." })
+    }
+}
+
+private fun buildDownloadNotification(context: Context, message: String, progress: Int, ongoing: Boolean): Notification {
+    val openIntent = PendingIntent.getActivity(context, 7101, Intent(context, MainActivity::class.java),
+        PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0)
+    return NotificationCompat.Builder(context, DOWNLOAD_NOTIFICATION_CHANNEL)
+        .setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle("YTDLP Downloader")
+        .setContentText(message).setContentIntent(openIntent).setOnlyAlertOnce(true)
+        .setOngoing(ongoing).setAutoCancel(!ongoing).setProgress(100, progress.coerceIn(0, 100), false).build()
+}
+
+private fun createDownloadForegroundInfo(context: Context, message: String, progress: Int): ForegroundInfo {
+    val notification = buildDownloadNotification(context, message, progress, true)
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+        ForegroundInfo(DOWNLOAD_NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+    else ForegroundInfo(DOWNLOAD_NOTIFICATION_ID, notification)
+}
+
 private data class DownloadHistoryItem(
     val id: String,
     val title: String,
