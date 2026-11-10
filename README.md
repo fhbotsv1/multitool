@@ -7,13 +7,11 @@ A native Android video downloader built with Kotlin and Jetpack Compose, using y
 ## Current status
 
 **Stage 1 — Android project foundation**
-
 - [x] Android Gradle project structure
 - [x] Kotlin + Jetpack Compose starter screen
 - [x] AndroidX and Gradle memory configuration
 
 **Stage 2 — URL inspection and metadata extraction**
-
 - [x] HTTP/HTTPS URL validation
 - [x] yt-dlp engine initialization on a background thread
 - [x] Video title, thumbnail, duration, uploader and extractor details
@@ -21,34 +19,34 @@ A native Android video downloader built with Kotlin and Jetpack Compose, using y
 - [x] User-facing extraction error handling
 
 **Stage 3 — Quality and output selection**
-
 - [x] Best Available quality mode
 - [x] Best Efficient mode, preferring AV1 where available without a fixed resolution cap
 - [x] Manual maximum resolution, populated from resolutions reported by the source
 - [x] Independent Original / HEVC (H.265) output choice
 - [x] Selection summary and format-selection plan
-- [x] Start yt-dlp downloads using selected quality mode
-- [x] Download progress and ETA reporting
-- [x] FFmpeg runtime added for separate-stream merging
-- [x] Publish completed downloads into Android Downloads on Android 10+
-- [ ] Cancellation and persistent background downloads (later stage)
 
-**Stage 4 — Download execution (initial implementation)**
+**Stage 4 — Download execution**
+- [x] Download on an IO coroutine with yt-dlp progress updates
+- [x] Best Available, Best Efficient and Manual Resolution passed to yt-dlp
+- [x] FFmpeg initialized for yt-dlp stream merging
+- [x] Android 10+ completed downloads published to `Downloads/YTDLP Downloader` through MediaStore
+- [x] Stable yt-dlp updater available through the library
+- [ ] Cancellation and persistent background downloads
 
-- Downloads run on an IO coroutine with yt-dlp progress updates.
-- Best Available uses yt-dlp's best video + best audio selection.
-- Best Efficient applies yt-dlp codec/resolution/bitrate sorting with AV1 preference where available; this is a preference, not a guarantee of smallest output.
-- Manual Resolution applies the chosen maximum height.
-- FFmpeg is initialized so yt-dlp can merge separate audio/video streams.
-- On Android 10+, completed output is copied into `Downloads/YTDLP Downloader` through MediaStore. On Android 8–9, this first implementation keeps the file in app-specific external storage.
-- HEVC selection is shown, but transcoding is deliberately deferred to Stage 5.
+**Stage 5 — HEVC/H.265 output conversion (initial implementation)**
+- [x] Original mode keeps the downloaded video stream unchanged
+- [x] HEVC mode downloads the source, then invokes the bundled FFmpeg executable to encode video with `libx265`
+- [x] Initial encoding defaults: CRF 28 and fast preset
+- [x] Original audio copied without re-encoding; if MP4 cannot contain the audio codec, retry in MKV
+- [x] Conversion progress reported separately from download progress
+- [x] If conversion fails, preserve and save the original download instead
+- [ ] Verify `libx265` availability and conversion behavior on target devices
 
 **Planned later stages**
-
-- [ ] yt-dlp download execution and format selection
-- [ ] FFmpeg merge and optional HEVC conversion
-- [ ] Download queue, progress, cancellation and history
-- [ ] Save completed files to Android Downloads
+- [ ] Download queue, pause/resume/cancel and history
+- [ ] Persistent background downloads and notifications
+- [ ] Improved format/codec controls and user-configurable HEVC quality
+- [ ] Download history and file management
 
 ## Development environment
 
@@ -65,11 +63,11 @@ The app uses yt-dlp extractors and is intended for websites supported by yt-dlp,
 
 - **Best Available:** request the best available video and audio streams.
 - **Best Efficient:** prefer efficient codecs such as AV1 when offered, then use yt-dlp's available format ranking. This is a preference, not a guarantee of a smaller file.
-- **Manual Resolution:** use the best source video at or below the selected resolution; the choices are populated from formats reported for that video.
+- **Manual Resolution:** use the best source video at or below the selected resolution; choices are populated from formats reported for that video.
 - **Original:** do not re-encode the downloaded video.
-- **HEVC/H.265:** selected independently and intended for FFmpeg conversion in Stage 5.
+- **HEVC/H.265:** selected independently; after downloading, FFmpeg re-encodes the video to H.265 while copying audio when compatible. The app tries MP4 first and MKV as a compatibility fallback.
 
-Quality selection and output codec are independent. For example, Best Available + HEVC is a valid planned combination. Stage 3 currently displays and maintains these selections; Stage 4 will pass the chosen format options to the actual download engine.
+Quality selection and output codec are independent. For example, Best Available + HEVC is a valid combination.
 
 ## Third-party licensing
 
