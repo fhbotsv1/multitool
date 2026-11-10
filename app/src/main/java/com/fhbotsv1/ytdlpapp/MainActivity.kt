@@ -131,6 +131,7 @@ private fun DownloaderHome() {
     var qualityMode by remember { mutableStateOf(QualityMode.BEST_AVAILABLE) }
     var outputCodec by remember { mutableStateOf(OutputCodec.ORIGINAL) }
     var manualResolution by remember { mutableStateOf(1080) }
+    val scope = rememberCoroutineScope()
     val appContext = LocalContext.current.applicationContext
     val context = LocalContext.current
     val workManager = remember { WorkManager.getInstance(appContext) }
@@ -398,7 +399,7 @@ private fun DownloadActionCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("Download", style = MaterialTheme.typography.titleMedium,
+            Text("Add to download queue", style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold)
             if (codec == OutputCodec.HEVC) {
                 Text(
@@ -414,7 +415,7 @@ private fun DownloadActionCard(
             ) {
                 Text(
                     when {
-                        !isDownloading -> "Start download"
+                        !isDownloading -> "Add to queue"
                         codec == OutputCodec.HEVC && progress >= 50f -> "Converting to HEVC…"
                         else -> "Downloading…"
                     }
