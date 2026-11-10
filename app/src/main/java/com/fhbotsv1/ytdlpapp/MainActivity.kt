@@ -316,9 +316,9 @@ private fun DownloaderHome() {
                         )
                         downloadQueue = downloadQueue + queued
                         saveDownloadQueue(appContext, downloadQueue)
-                        downloadStatus = "Added to download queue."
+                        statusMessage = "Added to download queue."
                     } else {
-                        downloadStatus = "Check the video link before adding it to the queue."
+                        statusMessage = "Check the video link before adding it to the queue."
                     }
                 }
             )
@@ -927,6 +927,7 @@ private data class QueueDownloadItem(
 private const val QUEUE_WORK_NAME = "ytdlp-download-queue"
 private const val DOWNLOAD_NOTIFICATION_CHANNEL = "ytdlp_downloads"
 private const val DOWNLOAD_NOTIFICATION_ID = 7101
+private const val DOWNLOAD_COMPLETION_NOTIFICATION_ID = 7102
 
 private fun enqueueDownloadQueue(workManager: WorkManager) {
     val request = OneTimeWorkRequestBuilder<DownloadQueueWorker>().build()
@@ -1083,7 +1084,7 @@ class DownloadQueueWorker(appContext: Context, params: WorkerParameters) : Corou
         val summary = if (failed == 0) "Queue completed · ${completed} downloaded" else "Queue finished · ${completed} downloaded · ${failed} failed"
         setProgress(Data.Builder().putFloat("progress", 100f).putString("status", summary).build())
         val manager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(DOWNLOAD_NOTIFICATION_ID, buildDownloadNotification(applicationContext, summary, 100, false))
+        manager.notify(DOWNLOAD_COMPLETION_NOTIFICATION_ID, buildDownloadNotification(applicationContext, summary, 100, false))
         return Result.success()
     }
 }
