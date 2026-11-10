@@ -347,7 +347,7 @@ private fun DownloaderHome() {
             etaSeconds = downloadEta,
             currentStatus = downloadStatus,
             isPaused = queuePaused,
-            isConverting = downloadStatus.contains("converting", ignoreCase = true),
+            isConverting = downloadStatus.contains("converting", ignoreCase = true) || downloadStatus.contains("conversion", ignoreCase = true),
             onStart = {
                 if (!isQueueRunning && downloadQueue.any { it.status == "Queued" || it.status == "Cancelled" }) {
                     setQueuePaused(appContext, false)
