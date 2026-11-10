@@ -148,8 +148,15 @@ private fun DownloaderHome() {
     var downloadQueue by remember { mutableStateOf(loadDownloadQueue(appContext)) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { enqueueDownloadQueue(workManager) }
     LaunchedEffect(workInfos) {
-        downloadQueue = loadDownloadQueue(appContext)
-        history = loadDownloadHistory(appContext)
+        if (workInfos != null) {
+            var refreshedQueue = loadDownloadQueue(appContext)
+            if (activeWorkInfo == null && refreshedQueue.any { it.status == "Downloading" }) {
+                refreshedQueue = refreshedQueue.map { if (it.status == "Downloading") it.copy(status = "Queued") else it }
+                saveDownloadQueue(appContext, refreshedQueue)
+            }
+            downloadQueue = refreshedQueue
+            history = loadDownloadHistory(appContext)
+        }
     }
 
     Column(
