@@ -1,6 +1,12 @@
 package com.fhbotsv1.ytdlpapp
 
+import android.content.ContentValues
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import java.io.File
+import java.net.URLConnection
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -22,6 +28,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -41,6 +48,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.yausername.youtubedl_android.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import com.yausername.youtubedl_android.mapper.VideoFormat
@@ -81,6 +89,11 @@ private fun DownloaderHome() {
     var videoUrl by remember { mutableStateOf("") }
     var videoInfo by remember { mutableStateOf<VideoInfo?>(null) }
     var isLoading by remember { mutableStateOf(false) }
+    var isDownloading by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableStateOf(0f) }
+    var downloadEta by remember { mutableStateOf<Long?>(null) }
+    var downloadStatus by remember { mutableStateOf("No download started.") }
+    var downloadedLocation by remember { mutableStateOf<String?>(null) }
     var statusMessage by remember { mutableStateOf("Paste a video link to get started.") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var qualityMode by remember { mutableStateOf(QualityMode.BEST_AVAILABLE) }
@@ -231,6 +244,78 @@ private fun DownloaderHome() {
                 manualResolution = manualResolution,
                 formats = info.formats.orEmpty()
             )
+            DownloadActionCard(
+                enabled = !isLoading && !isDownloading,
+                isDownloading = isDownloading,
+                progress = downloadProgress,
+                etaSeconds = downloadEta,
+                status = downloadStatus,
+                savedLocation = downloadedLocation,
+                codec = outputCodec,
+                onStart = {
+                    val selectedUrl = videoUrl.trim()
+                    isDownloading = true
+                    downloadProgress = 0f
+                    downloadEta = null
+                    downloadedLocation = null
+                    downloadStatus = "Preparing download…"
+                    scope.launch {
+                        try {
+                            val saved = withContext(Dispatchers.IO) {
+                                YoutubeDL.init(appContext)
+                                FFmpeg.getInstance().init(appContext)
+                                val outputDir = File(
+                                    appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                                        ?: appContext.filesDir,
+                                    "ytdlp-stage4"
+                                ).apply { mkdirs() }
+                                val previousNames = outputDir.listFiles()
+                                    ?.map { it.name }?.toSet().orEmpty()
+                                val request = YoutubeDLRequest(selectedUrl).apply {
+                                    addOption("--no-playlist")
+                                    addOption("--no-mtime")
+                                    addOption("--newline")
+                                    addOption("-o", File(outputDir,
+                                        "%(title).180B [%(id)s]-%(epoch)s.%(ext)s").absolutePath)
+                                    addOption("-f", buildFormatSelector(qualityMode, manualResolution))
+                                    if (qualityMode == QualityMode.BEST_EFFICIENT) {
+                                        addOption("-S", "vcodec:av01,res,br")
+                                    }
+                                }
+                                val processId = "ytdlp-${System.currentTimeMillis()}"
+                                YoutubeDL.getInstance().execute(request, processId) { progress, eta, line ->
+                                    scope.launch {
+                                        downloadProgress = progress.coerceIn(0f, 100f)
+                                        downloadEta = eta
+                                        if (line.isNotBlank()) downloadStatus = line.take(180)
+                                    }
+                                }
+                                val outputFile = outputDir.listFiles()
+                                    ?.filter { file ->
+                                        file.isFile && file.name !in previousNames &&
+                                            !file.name.endsWith(".part", true) &&
+                                            !file.name.endsWith(".ytdl", true) &&
+                                            !file.name.endsWith(".temp", true)
+                                    }
+                                    ?.maxByOrNull { it.lastModified() }
+                                    ?: throw IllegalStateException(
+                                        "yt-dlp finished but no completed output file was found."
+                                    )
+                                publishToDownloads(appContext, outputFile)
+                            }
+                            downloadProgress = 100f
+                            downloadEta = 0L
+                            downloadedLocation = saved
+                            downloadStatus = "Download completed successfully."
+                        } catch (exception: Exception) {
+                            downloadStatus = exception.message?.lineSequence()
+                                ?.firstOrNull()?.take(300) ?: "Download failed."
+                        } finally {
+                            isDownloading = false
+                        }
+                    }
+                }
+            )
         }
 
         Card(modifier = Modifier.fillMaxWidth()) {
@@ -246,6 +331,96 @@ private fun DownloaderHome() {
         Text("Use this app only for content you are permitted to save. DRM-protected content is not supported.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+
+@Composable
+private fun DownloadActionCard(
+    enabled: Boolean,
+    isDownloading: Boolean,
+    progress: Float,
+    etaSeconds: Long?,
+    status: String,
+    savedLocation: String?,
+    codec: OutputCodec,
+    onStart: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text("Download", style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold)
+            if (codec == OutputCodec.HEVC) {
+                Text(
+                    "HEVC is selected. Stage 4 downloads the original source first; actual H.265 conversion will be added in Stage 5.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Button(
+                onClick = onStart,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = enabled
+            ) {
+                Text(if (isDownloading) "Downloading…" else "Start download")
+            }
+            if (isDownloading || progress > 0f) {
+                LinearProgressIndicator(
+                    progress = progress / 100f,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("${progress.toInt()}% complete" +
+                    (etaSeconds?.takeIf { it > 0 }?.let { " · ETA ${formatDuration(it.toInt())}" } ?: ""),
+                    style = MaterialTheme.typography.bodyMedium)
+            }
+            Text(status, style = MaterialTheme.typography.bodySmall)
+            savedLocation?.let { SettingLine("Saved to", it) }
+            Text(
+                "Downloads are saved to the phone's Downloads folder when supported by Android. On older Android versions, the app uses its private download folder.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+private fun buildFormatSelector(mode: QualityMode, resolution: Int): String = when (mode) {
+    QualityMode.BEST_AVAILABLE -> "bestvideo+bestaudio/best"
+    QualityMode.BEST_EFFICIENT -> "bestvideo+bestaudio/best"
+    QualityMode.MANUAL ->
+        "bestvideo[height<=$resolution]+bestaudio/best[height<=$resolution]"
+}
+
+private fun publishToDownloads(context: android.content.Context, source: File): String {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return source.absolutePath
+    val mimeType = URLConnection.guessContentTypeFromName(source.name)
+        ?: "application/octet-stream"
+    val values = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, source.name)
+        put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+        put(MediaStore.MediaColumns.RELATIVE_PATH,
+            Environment.DIRECTORY_DOWNLOADS + "/YTDLP Downloader")
+        put(MediaStore.MediaColumns.IS_PENDING, 1)
+    }
+    val resolver = context.contentResolver
+    val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        ?: throw IllegalStateException("Android could not create the Downloads entry.")
+    try {
+        resolver.openOutputStream(uri)?.use { output ->
+            source.inputStream().use { input -> input.copyTo(output) }
+        } ?: throw IllegalStateException("Could not open the Downloads output file.")
+        val completeValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.IS_PENDING, 0)
+        }
+        resolver.update(uri, completeValues, null, null)
+        source.delete()
+        return "Downloads/YTDLP Downloader/${source.name}"
+    } catch (exception: Exception) {
+        resolver.delete(uri, null, null)
+        throw exception
     }
 }
 
