@@ -419,7 +419,7 @@ private fun DownloadActionCard(
             }
             if (isDownloading || progress > 0f) {
                 LinearProgressIndicator(
-                    progress = progress / 100f,
+                    progress = { progress / 100f },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text("${progress.toInt()}% complete" +
@@ -608,6 +608,15 @@ private fun VideoDetailsCard(info: VideoInfo) {
             if (info.width > 0 && info.height > 0) {
                 SettingLine("Source dimensions", "${info.width} × ${info.height}")
             }
+            val reportedCodecs = info.formats.orEmpty()
+                .mapNotNull { format ->
+                    format.vcodec?.takeIf { it.isNotBlank() && it != "none" }
+                        ?.let { displayVideoCodec(it) }
+                }
+                .distinct()
+            if (reportedCodecs.isNotEmpty()) {
+                SettingLine("Available video codecs", reportedCodecs.joinToString(" · "))
+            }
             info.webpageUrl?.let { SettingLine("Page", it) }
         }
     }
@@ -774,6 +783,9 @@ private fun SelectionSummaryCard(
         QualityMode.MANUAL -> "bestvideo[height<=$manualResolution]+bestaudio/best[height<=$manualResolution]"
     }
     val manualAvailable = formats.any { it.height == manualResolution && it.height > 0 }
+    val estimate = remember(formats, qualityMode, manualResolution) {
+        estimateSourceFormat(formats, qualityMode, manualResolution)
+    }
     Card(modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
         Column(modifier = Modifier.padding(16.dp),
@@ -781,6 +793,8 @@ private fun SelectionSummaryCard(
             Text("Current selection", style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold)
             SettingLine("Quality mode", if (qualityMode == QualityMode.MANUAL) "Manual · ${manualResolution}p" else qualityMode.label)
+            SettingLine("Detected source video codec", estimate.codec)
+            SettingLine("Estimated download size", estimate.bytes?.let { "~${formatBytes(it)} (source estimate)" } ?: "Not provided by this website")
             SettingLine("Video output", outputCodec.label)
             SettingLine("Format selection plan", selector)
             if (qualityMode == QualityMode.MANUAL && !manualAvailable) {
@@ -790,8 +804,77 @@ private fun SelectionSummaryCard(
             if (outputCodec == OutputCodec.HEVC) {
                 Text("The video will be re-encoded to H.265 after downloading. Audio is copied where compatible.",
                     style = MaterialTheme.typography.bodySmall)
+                if (estimate.codec == "AV1") {
+                    Text("This source is already AV1. Converting it to HEVC may increase file size and will re-encode the video unnecessarily.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                }
             }
+            Text("Size is an estimate from the formats reported by the website. Actual download size can differ.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+private data class SourceFormatEstimate(
+    val codec: String,
+    val bytes: Long?
+)
+
+private fun estimateSourceFormat(
+    formats: List<VideoFormat>,
+    mode: QualityMode,
+    resolution: Int
+): SourceFormatEstimate {
+    val videos = formats.filter {
+        !it.vcodec.isNullOrBlank() && it.vcodec != "none" &&
+            (mode != QualityMode.MANUAL || (it.height > 0 && it.height <= resolution))
+    }
+    if (videos.isEmpty()) return SourceFormatEstimate("Not reported", null)
+
+    fun sizeOf(format: VideoFormat): Long? =
+        format.fileSizeApproximate.takeIf { it > 0L }
+            ?: format.fileSize.takeIf { it > 0L }
+
+    val videoOnly = videos.filter { it.acodec.isNullOrBlank() || it.acodec == "none" }
+    val candidates = if (videoOnly.isNotEmpty()) videoOnly else videos
+    val selected = if (mode == QualityMode.BEST_EFFICIENT) {
+        candidates.maxWithOrNull(
+            compareBy<VideoFormat> { if (it.vcodec?.startsWith("av01", true) == true) 1 else 0 }
+                .thenBy { it.height }
+                .thenBy { sizeOf(it) ?: 0L }
+        )
+    } else {
+        candidates.maxWithOrNull(
+            compareBy<VideoFormat> { it.height }.thenBy { sizeOf(it) ?: 0L }
+        )
+    } ?: return SourceFormatEstimate("Not reported", null)
+
+    val codec = displayVideoCodec(selected.vcodec)
+    val videoBytes = sizeOf(selected)
+    val hasAudioInSameFormat = !selected.acodec.isNullOrBlank() && selected.acodec != "none"
+    val audioBytes = if (hasAudioInSameFormat) 0L else {
+        formats.asSequence()
+            .filter { it.vcodec == "none" && !it.acodec.isNullOrBlank() && it.acodec != "none" }
+            .mapNotNull { sizeOf(it) }
+            .maxOrNull() ?: 0L
+    }
+    val total = videoBytes?.let { it + audioBytes }?.takeIf { it > 0L }
+    return SourceFormatEstimate(codec, total)
+}
+
+private fun displayVideoCodec(codec: String?): String {
+    val value = codec?.lowercase()?.takeIf { it.isNotBlank() && it != "none" }
+        ?: return "Not reported"
+    return when {
+        value.startsWith("av01") -> "AV1"
+        value.startsWith("hev") || value.startsWith("hvc1") -> "HEVC / H.265"
+        value.startsWith("avc") -> "H.264 / AVC"
+        value.startsWith("vp09") -> "VP9"
+        value.startsWith("vp8") -> "VP8"
+        value.startsWith("theora") -> "Theora"
+        else -> codec.substringBefore('.').uppercase()
     }
 }
 
