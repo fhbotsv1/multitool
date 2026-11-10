@@ -48,7 +48,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import com.yausername.youtubedl_android.FFmpeg
+import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import com.yausername.youtubedl_android.mapper.VideoFormat
@@ -67,6 +67,11 @@ private enum class OutputCodec(val label: String) {
     ORIGINAL("Original"),
     HEVC("HEVC / H.265")
 }
+
+private data class DownloadOutcome(
+    val location: String,
+    val status: String
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -285,7 +290,11 @@ private fun DownloaderHome() {
                                 val processId = "ytdlp-${System.currentTimeMillis()}"
                                 YoutubeDL.getInstance().execute(request, processId) { progress, eta, line ->
                                     scope.launch {
-                                        downloadProgress = progress.coerceIn(0f, 100f)
+                                        downloadProgress = if (outputCodec == OutputCodec.HEVC) {
+                                            progress.coerceIn(0f, 100f) * 0.5f
+                                        } else {
+                                            progress.coerceIn(0f, 100f)
+                                        }
                                         downloadEta = eta
                                         if (line.isNotBlank()) downloadStatus = line.take(180)
                                     }
@@ -301,12 +310,47 @@ private fun DownloaderHome() {
                                     ?: throw IllegalStateException(
                                         "yt-dlp finished but no completed output file was found."
                                     )
-                                publishToDownloads(appContext, outputFile)
+                                if (outputCodec == OutputCodec.HEVC) {
+                                    scope.launch {
+                                        downloadStatus = "Download finished. Converting video to HEVC…"
+                                    }
+                                    try {
+                                        val hevcFile = transcodeToHevc(
+                                            context = appContext,
+                                            source = outputFile,
+                                            outputDir = outputDir,
+                                            durationSeconds = info.duration.toLong()
+                                        ) { conversionProgress, conversionStatus ->
+                                            scope.launch {
+                                                downloadProgress = 50f + conversionProgress * 0.5f
+                                                downloadStatus = conversionStatus
+                                            }
+                                        }
+                                        val location = publishToDownloads(appContext, hevcFile)
+                                        outputFile.delete()
+                                        DownloadOutcome(
+                                            location,
+                                            "Download and HEVC conversion completed successfully."
+                                        )
+                                    } catch (conversionError: Exception) {
+                                        val location = publishToDownloads(appContext, outputFile)
+                                        DownloadOutcome(
+                                            location,
+                                            "HEVC conversion failed; the original video was saved instead. " +
+                                                (conversionError.message ?: "Unknown FFmpeg error").take(220)
+                                        )
+                                    }
+                                } else {
+                                    DownloadOutcome(
+                                        publishToDownloads(appContext, outputFile),
+                                        "Download completed successfully."
+                                    )
+                                }
                             }
                             downloadProgress = 100f
                             downloadEta = 0L
-                            downloadedLocation = saved
-                            downloadStatus = "Download completed successfully."
+                            downloadedLocation = saved.location
+                            downloadStatus = saved.status
                         } catch (exception: Exception) {
                             downloadStatus = exception.message?.lineSequence()
                                 ?.firstOrNull()?.take(300) ?: "Download failed."
@@ -355,7 +399,7 @@ private fun DownloadActionCard(
                 fontWeight = FontWeight.SemiBold)
             if (codec == OutputCodec.HEVC) {
                 Text(
-                    "HEVC is selected. Stage 4 downloads the original source first; actual H.265 conversion will be added in Stage 5.",
+                    "The downloaded video will be converted to H.265. The original is retained if conversion fails.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -365,7 +409,13 @@ private fun DownloadActionCard(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = enabled
             ) {
-                Text(if (isDownloading) "Downloading…" else "Start download")
+                Text(
+                    when {
+                        !isDownloading -> "Start download"
+                        codec == OutputCodec.HEVC && progress >= 50f -> "Converting to HEVC…"
+                        else -> "Downloading…"
+                    }
+                )
             }
             if (isDownloading || progress > 0f) {
                 LinearProgressIndicator(
@@ -392,6 +442,120 @@ private fun buildFormatSelector(mode: QualityMode, resolution: Int): String = wh
     QualityMode.BEST_EFFICIENT -> "bestvideo+bestaudio/best"
     QualityMode.MANUAL ->
         "bestvideo[height<=$resolution]+bestaudio/best[height<=$resolution]"
+}
+
+private fun transcodeToHevc(
+    context: android.content.Context,
+    source: File,
+    outputDir: File,
+    durationSeconds: Long,
+    onProgress: (Float, String) -> Unit
+): File {
+    FFmpeg.init(context)
+    val ffmpegBinary = File(context.applicationInfo.nativeLibraryDir, "libffmpeg.so")
+    if (!ffmpegBinary.isFile) {
+        throw IllegalStateException("The bundled FFmpeg executable was not found.")
+    }
+
+    val baseName = source.nameWithoutExtension
+    val mp4Output = File(outputDir, "$baseName.hevc.mp4")
+    val mkvOutput = File(outputDir, "$baseName.hevc.mkv")
+
+    val mp4Result = runHevcEncoding(
+        context, ffmpegBinary, source, mp4Output, durationSeconds, "mp4", onProgress
+    )
+    if (mp4Result.exitCode == 0 && mp4Output.isFile && mp4Output.length() > 0L) {
+        return mp4Output
+    }
+    mp4Output.delete()
+
+    // Retry in MKV if the source audio codec cannot be copied into MP4.
+    val mkvResult = runHevcEncoding(
+        context, ffmpegBinary, source, mkvOutput, durationSeconds, "mkv", onProgress
+    )
+    if (mkvResult.exitCode == 0 && mkvOutput.isFile && mkvOutput.length() > 0L) {
+        return mkvOutput
+    }
+    mkvOutput.delete()
+
+    val details = mkvResult.error.ifBlank { mp4Result.error }
+    throw IllegalStateException(
+        "FFmpeg could not encode this video as HEVC. " +
+            details.takeLast(500).ifBlank { "The bundled build may not include the libx265 encoder." }
+    )
+}
+
+private data class HevcProcessResult(
+    val exitCode: Int,
+    val error: String
+)
+
+private fun runHevcEncoding(
+    context: android.content.Context,
+    ffmpegBinary: File,
+    source: File,
+    destination: File,
+    durationSeconds: Long,
+    container: String,
+    onProgress: (Float, String) -> Unit
+): HevcProcessResult {
+    destination.delete()
+    val command = mutableListOf(
+        ffmpegBinary.absolutePath,
+        "-y",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-i", source.absolutePath,
+        "-map", "0:v:0",
+        "-map", "0:a?",
+        "-c:v", "libx265",
+        "-preset", "fast",
+        "-crf", "28"
+    )
+    if (container == "mp4") {
+        command.addAll(listOf("-tag:v", "hvc1", "-movflags", "+faststart"))
+    }
+    command.addAll(
+        listOf("-c:a", "copy", "-progress", "pipe:1", "-nostats", destination.absolutePath)
+    )
+
+    val baseDir = File(context.noBackupFilesDir, "youtubedl-android")
+    val pythonLibDir = File(baseDir, "packages/python/usr/lib")
+    val ffmpegLibDir = File(baseDir, "packages/ffmpeg/usr/lib")
+    val nativeLibDir = File(context.applicationInfo.nativeLibraryDir)
+    val processBuilder = ProcessBuilder(command).redirectErrorStream(true)
+    processBuilder.environment().apply {
+        val libraryPaths = listOf(pythonLibDir, ffmpegLibDir, nativeLibDir)
+            .filter { it.exists() }
+            .joinToString(":") { it.absolutePath }
+        this["LD_LIBRARY_PATH"] = libraryPaths
+        this["PATH"] = nativeLibDir.absolutePath + ":" + (this["PATH"] ?: "")
+        this["TMPDIR"] = context.cacheDir.absolutePath
+        this["HOME"] = context.noBackupFilesDir.absolutePath
+    }
+
+    val process = processBuilder.start()
+    val recentOutput = ArrayDeque<String>()
+    process.inputStream.bufferedReader().useLines { lines ->
+        lines.forEach { line ->
+            if (line.isNotBlank()) {
+                if (recentOutput.size >= 20) recentOutput.removeFirst()
+                recentOutput.addLast(line)
+                if (line.startsWith("out_time_ms=")) {
+                    val timeMicros = line.substringAfter('=').toLongOrNull()
+                    if (timeMicros != null && durationSeconds > 0L) {
+                        val percent = (timeMicros.toDouble() /
+                            (durationSeconds * 1_000_000.0) * 100.0).toFloat().coerceIn(0f, 99f)
+                        onProgress(percent, "Converting to HEVC… ${percent.toInt()}%")
+                    }
+                } else if (line.startsWith("progress=") && line.endsWith("end")) {
+                    onProgress(100f, "Finishing HEVC conversion…")
+                }
+            }
+        }
+    }
+    val exitCode = process.waitFor()
+    return HevcProcessResult(exitCode, recentOutput.joinToString("\n"))
 }
 
 private fun publishToDownloads(context: android.content.Context, source: File): String {
@@ -582,7 +746,7 @@ private fun DownloadSettingsCard(
                             if (codec == OutputCodec.ORIGINAL)
                                 "Keep the downloaded video stream unchanged; no video re-encoding."
                             else
-                                "Convert the downloaded video to H.265 using FFmpeg in a later stage."
+                                "Re-encode the video to H.265 with FFmpeg; copy audio when compatible."
                             ,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -624,7 +788,7 @@ private fun SelectionSummaryCard(
                     style = MaterialTheme.typography.bodySmall)
             }
             if (outputCodec == OutputCodec.HEVC) {
-                Text("HEVC conversion is selected but is not performed yet. It will be added with FFmpeg in Stage 5.",
+                Text("The video will be re-encoded to H.265 after downloading. Audio is copied where compatible.",
                     style = MaterialTheme.typography.bodySmall)
             }
         }
