@@ -19,12 +19,19 @@ A native Android video downloader built with Kotlin and Jetpack Compose, using y
 - [x] Video title, thumbnail, duration, uploader and extractor details
 - [x] Available source formats, codecs, approximate sizes and resolutions
 - [x] User-facing extraction error handling
-- [ ] Manual format selection and download execution
+
+**Stage 3 — Quality and output selection**
+
+- [x] Best Available quality mode
+- [x] Best Efficient mode, preferring AV1 where available without a fixed resolution cap
+- [x] Manual maximum resolution, populated from resolutions reported by the source
+- [x] Independent Original / HEVC (H.265) output choice
+- [x] Selection summary and format-selection plan
+- [ ] Pass the selected options to the download engine (next stage)
 
 **Planned later stages**
 
-- [ ] Best Available / Best Efficient / Manual quality selection
-- [ ] Original codec / HEVC (H.265) output selection
+- [ ] yt-dlp download execution and format selection
 - [ ] FFmpeg merge and optional HEVC conversion
 - [ ] Download queue, progress, cancellation and history
 - [ ] Save completed files to Android Downloads
@@ -36,26 +43,19 @@ A native Android video downloader built with Kotlin and Jetpack Compose, using y
 - Android SDK (compile SDK 36)
 - Kotlin + Jetpack Compose
 
-## Open the project
-
-1. Download or clone this repository.
-2. In Android Studio, choose **Open** and select the repository folder.
-3. Allow Gradle to sync and install any requested Android SDK components.
-4. Run the **app** configuration on an Android device or emulator.
-
-The Gradle wrapper properties are included. If the wrapper scripts/JAR are not present in your local checkout, create them from the project root with `gradle wrapper --gradle-version 8.13` (requires a local Gradle installation), then reopen the project.
-
 ## Website compatibility
 
 The app uses yt-dlp extractors and is intended for websites supported by yt-dlp, rather than a fixed list of platforms. Actual availability depends on the extractor, site changes, region, network access, and whether the site requires authentication or cookies. No universal compatibility is guaranteed.
 
-## Planned download options
+## Download options
 
-- **Quality:** Best Available, Best Efficient, or Manual resolution (only source-provided formats).
-- **Output codec:** Original (no video re-encoding) or HEVC/H.265 (FFmpeg conversion).
-- Audio should be preserved and copied where compatible, avoiding unnecessary re-encoding.
+- **Best Available:** request the best available video and audio streams.
+- **Best Efficient:** prefer efficient codecs such as AV1 when offered, then use yt-dlp's available format ranking. This is a preference, not a guarantee of a smaller file.
+- **Manual Resolution:** use the best source video at or below the selected resolution; the choices are populated from formats reported for that video.
+- **Original:** do not re-encode the downloaded video.
+- **HEVC/H.265:** selected independently and intended for FFmpeg conversion in Stage 5.
 
-Quality selection and output codec are independent. For example, Best Available + HEVC is intended to be a supported combination.
+Quality selection and output codec are independent. For example, Best Available + HEVC is a valid planned combination. Stage 3 currently displays and maintains these selections; Stage 4 will pass the chosen format options to the actual download engine.
 
 ## Third-party licensing
 
