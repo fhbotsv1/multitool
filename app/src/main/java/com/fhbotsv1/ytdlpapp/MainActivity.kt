@@ -989,7 +989,7 @@ private fun DownloadQueueCard(
                 Text(progress.toInt().toString() + "% · " + currentStatus + (etaSeconds?.takeIf { it > 0 }?.let { " · ETA " + formatDuration(it.toInt()) } ?: ""), style = MaterialTheme.typography.bodySmall)
             }
             Button(onClick = onStart, modifier = Modifier.fillMaxWidth(), enabled = !isRunning && items.any { it.status == "Queued" }) { Text(if (isRunning) "Queue running…" else "Start queued downloads") }
-            Text("Downloads run one at a time. The queue is saved on this device; interrupted items return to Queued after reopening the app.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Downloads run one at a time in the background. The queue is saved on this device and WorkManager can continue it when the app is closed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -1028,7 +1028,7 @@ private suspend fun performQueuedDownload(context: android.content.Context, item
     }
 }
 
-private class DownloadQueueWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
+class DownloadQueueWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
         createDownloadNotificationChannel(applicationContext)
         var queue = loadDownloadQueue(applicationContext).map { if (it.status == "Downloading") it.copy(status = "Queued") else it }
