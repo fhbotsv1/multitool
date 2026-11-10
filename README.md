@@ -33,6 +33,13 @@ A native Android video downloader built with Kotlin and Jetpack Compose, using y
 - [x] Stable yt-dlp updater available through the library
 - [ ] Cancellation and persistent background downloads
 
+**Stage 6 — Source codec and size estimate**
+- [x] Display video codecs reported by the source website
+- [x] Estimate selected source download size from reported video/audio format sizes when available
+- [x] Identify the likely selected video codec for the chosen quality mode
+- [x] Warn when converting an AV1 source to HEVC may increase file size and cause unnecessary re-encoding
+- [x] Clarify that source size is an estimate and actual download size can differ
+
 **Stage 5 — HEVC/H.265 output conversion (initial implementation)**
 - [x] Original mode keeps the downloaded video stream unchanged
 - [x] HEVC mode downloads the source, then invokes the bundled FFmpeg executable to encode video with `libx265`
