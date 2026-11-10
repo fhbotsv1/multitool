@@ -31,7 +31,17 @@ A native Android video downloader built with Kotlin and Jetpack Compose, using y
 - [x] FFmpeg initialized for yt-dlp stream merging
 - [x] Android 10+ completed downloads published to `Downloads/YTDLP Downloader` through MediaStore
 - [x] Stable yt-dlp updater available through the library
-- [ ] Cancellation and persistent background downloads
+- [x] Persistent background queue processing through WorkManager foreground execution
+- [x] Ongoing progress notification and completion notification
+- [x] Notification permission request on Android 13+
+- [ ] Pause/resume/cancel controls
+
+**Stage 8 — Background downloads and notifications**
+- [x] Run the persistent queue through WorkManager instead of an Activity coroutine
+- [x] Keep queue processing active when the app is sent to the background
+- [x] Use a data-sync foreground notification with live progress
+- [x] Show a completion summary notification
+- [x] Request notification permission on Android 13 and newer
 
 **Stage 7 — Download queue and history**
 - [x] Save completed download records locally across app restarts
@@ -61,10 +71,12 @@ A native Android video downloader built with Kotlin and Jetpack Compose, using y
 - [ ] Verify `libx265` availability and conversion behavior on target devices
 
 **Planned later stages**
-- [ ] Pause/resume/cancel and persistent background downloads
-- [ ] Persistent background downloads and notifications
+- [ ] Pause/resume/cancel controls
 - [ ] Improved format/codec controls and user-configurable HEVC quality
-- [ ] Download history and file management
+
+## Background behavior
+
+The queue is processed by a WorkManager long-running worker using an Android data-sync foreground service. The app displays a persistent progress notification while downloads run and a completion summary when the queue finishes. On Android 13 and newer, notification permission is requested when the user starts the queue; if denied, Android may hide the notification from the notification drawer even though foreground work can still run. Battery restrictions, network loss, force-stop, and manufacturer-specific background limits can still interrupt downloads.
 
 ## Development environment
 
