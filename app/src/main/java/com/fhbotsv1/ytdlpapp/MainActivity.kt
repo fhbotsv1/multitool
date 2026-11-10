@@ -793,7 +793,7 @@ private fun SelectionSummaryCard(
             Text("Current selection", style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold)
             SettingLine("Quality mode", if (qualityMode == QualityMode.MANUAL) "Manual · ${manualResolution}p" else qualityMode.label)
-            SettingLine("Detected source video codec", estimate.codec)
+            SettingLine("Likely selected source codec", estimate.codec)
             SettingLine("Estimated download size", estimate.bytes?.let { "~${formatBytes(it)} (source estimate)" } ?: "Not provided by this website")
             SettingLine("Video output", outputCodec.label)
             SettingLine("Format selection plan", selector)
