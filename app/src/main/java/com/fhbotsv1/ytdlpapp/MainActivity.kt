@@ -146,7 +146,13 @@ private fun DownloaderHome() {
     val downloadStatus = activeWorkInfo?.progress?.getString("status") ?: if (isQueueRunning) "Preparing background download…" else "No download started."
     var history by remember { mutableStateOf(loadDownloadHistory(appContext)) }
     var downloadQueue by remember { mutableStateOf(loadDownloadQueue(appContext)) }
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { enqueueDownloadQueue(workManager) }
+    var queuePaused by remember { mutableStateOf(loadQueuePaused(appContext)) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        setQueuePaused(appContext, false)
+        queuePaused = false
+        setQueueControl(appContext, "")
+        enqueueDownloadQueue(workManager)
+    }
     LaunchedEffect(workInfos) {
         if (workInfos != null) {
             var refreshedQueue = loadDownloadQueue(appContext)
@@ -155,6 +161,7 @@ private fun DownloaderHome() {
                 saveDownloadQueue(appContext, refreshedQueue)
             }
             downloadQueue = refreshedQueue
+            queuePaused = loadQueuePaused(appContext)
             history = loadDownloadHistory(appContext)
         }
     }
@@ -339,12 +346,37 @@ private fun DownloaderHome() {
             progress = downloadProgress,
             etaSeconds = downloadEta,
             currentStatus = downloadStatus,
+            isPaused = queuePaused,
+            isConverting = downloadStatus.contains("converting", ignoreCase = true),
             onStart = {
-                if (!isQueueRunning && downloadQueue.any { it.status == "Queued" }) {
+                if (!isQueueRunning && downloadQueue.any { it.status == "Queued" || it.status == "Cancelled" }) {
+                    setQueuePaused(appContext, false)
+                    queuePaused = false
+                    setQueueControl(appContext, "")
                     if (Build.VERSION.SDK_INT >= 33 &&
                         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
                     ) notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     else enqueueDownloadQueue(workManager)
+                }
+            },
+            onPause = {
+                setQueuePaused(appContext, true)
+                queuePaused = true
+                setQueueControl(appContext, "pause")
+                downloadQueue.firstOrNull { it.status == "Downloading" }?.let { active ->
+                    runCatching { YoutubeDL.getInstance().destroyProcessById("ytdlp-" + active.id) }
+                }
+            },
+            onResume = {
+                setQueuePaused(appContext, false)
+                queuePaused = false
+                setQueueControl(appContext, "")
+                enqueueDownloadQueue(workManager)
+            },
+            onCancelActive = {
+                downloadQueue.firstOrNull { it.status == "Downloading" }?.let { active ->
+                    setQueueControl(appContext, "cancel_current")
+                    runCatching { YoutubeDL.getInstance().destroyProcessById("ytdlp-" + active.id) }
                 }
             },
             onRetry = { item ->
@@ -937,6 +969,27 @@ private const val QUEUE_WORK_NAME = "ytdlp-download-queue"
 private const val DOWNLOAD_NOTIFICATION_CHANNEL = "ytdlp_downloads"
 private const val DOWNLOAD_NOTIFICATION_ID = 7101
 private const val DOWNLOAD_COMPLETION_NOTIFICATION_ID = 7102
+private const val QUEUE_CONTROL_PREFS = "queue_control"
+private const val QUEUE_PAUSED_KEY = "paused"
+private const val QUEUE_COMMAND_KEY = "command"
+
+private fun loadQueuePaused(context: Context): Boolean =
+    context.getSharedPreferences(QUEUE_CONTROL_PREFS, Context.MODE_PRIVATE)
+        .getBoolean(QUEUE_PAUSED_KEY, false)
+
+private fun setQueuePaused(context: Context, paused: Boolean) {
+    context.getSharedPreferences(QUEUE_CONTROL_PREFS, Context.MODE_PRIVATE)
+        .edit().putBoolean(QUEUE_PAUSED_KEY, paused).apply()
+}
+
+private fun setQueueControl(context: Context, command: String) {
+    context.getSharedPreferences(QUEUE_CONTROL_PREFS, Context.MODE_PRIVATE)
+        .edit().putString(QUEUE_COMMAND_KEY, command).apply()
+}
+
+private fun getQueueControl(context: Context): String =
+    context.getSharedPreferences(QUEUE_CONTROL_PREFS, Context.MODE_PRIVATE)
+        .getString(QUEUE_COMMAND_KEY, "") ?: ""
 
 private fun enqueueDownloadQueue(workManager: WorkManager) {
     val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
@@ -973,7 +1026,9 @@ private fun saveDownloadQueue(context: android.content.Context, items: List<Queu
 @Composable
 private fun DownloadQueueCard(
     items: List<QueueDownloadItem>, isRunning: Boolean, progress: Float, etaSeconds: Long?,
-    currentStatus: String, onStart: () -> Unit, onRetry: (QueueDownloadItem) -> Unit,
+    currentStatus: String, isPaused: Boolean, isConverting: Boolean,
+    onStart: () -> Unit, onPause: () -> Unit, onResume: () -> Unit,
+    onCancelActive: () -> Unit, onRetry: (QueueDownloadItem) -> Unit,
     onRemove: (QueueDownloadItem) -> Unit, onClearCompleted: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -989,8 +1044,12 @@ private fun DownloadQueueCard(
                     Text(item.status + if (item.error.isNotBlank()) " · " + item.error else "", style = MaterialTheme.typography.bodySmall,
                         color = if (item.status == "Failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (item.status == "Failed") TextButton(onClick = { onRetry(item) }, enabled = !isRunning) { Text("Retry") }
-                        if (item.status != "Downloading") TextButton(onClick = { onRemove(item) }, enabled = !isRunning) { Text("Remove") }
+                        if (item.status == "Failed" || item.status == "Cancelled") {
+                            TextButton(onClick = { onRetry(item) }, enabled = !isRunning) { Text("Retry") }
+                        }
+                        if (item.status != "Downloading") {
+                            TextButton(onClick = { onRemove(item) }) { Text("Remove") }
+                        }
                     }
                 }
                 if (item != items.last()) androidx.compose.material3.HorizontalDivider()
@@ -999,8 +1058,27 @@ private fun DownloadQueueCard(
                 LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
                 Text(progress.toInt().toString() + "% · " + currentStatus + (etaSeconds?.takeIf { it > 0 }?.let { " · ETA " + formatDuration(it.toInt()) } ?: ""), style = MaterialTheme.typography.bodySmall)
             }
-            Button(onClick = onStart, modifier = Modifier.fillMaxWidth(), enabled = !isRunning && items.any { it.status == "Queued" }) { Text(if (isRunning) "Queue running…" else "Start queued downloads") }
-            Text("Downloads run one at a time in the background. The queue is saved on this device and WorkManager can continue it when the app is closed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (isRunning) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = onPause, enabled = !isPaused && !isConverting, modifier = Modifier.weight(1f)) {
+                        Text("Pause queue")
+                    }
+                    OutlinedButton(onClick = onCancelActive, enabled = !isConverting && items.any { it.status == "Downloading" }, modifier = Modifier.weight(1f)) {
+                        Text("Cancel current")
+                    }
+                }
+                if (isConverting) {
+                    Text("Pause and cancel are temporarily unavailable during HEVC conversion.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else if (isPaused && items.any { it.status == "Queued" }) {
+                Button(onClick = onResume, modifier = Modifier.fillMaxWidth()) { Text("Resume queue") }
+            } else {
+                Button(onClick = onStart, modifier = Modifier.fillMaxWidth(),
+                    enabled = items.any { it.status == "Queued" }) { Text("Start queued downloads") }
+            }
+            Text("Downloads run one at a time in the background. Pause stops the active yt-dlp process; resume retries it and may continue from a partial file when the source supports resuming.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -1049,11 +1127,26 @@ class DownloadQueueWorker(appContext: Context, params: WorkerParameters) : Corou
         setForeground(createDownloadForegroundInfo(applicationContext, "Starting download queue…", 0))
         var completed = 0
         var failed = 0
-        for (item in pending) {
+        for (queuedItem in pending) {
             if (isStopped) {
                 queue = loadDownloadQueue(applicationContext).map { if (it.status == "Downloading") it.copy(status = "Queued") else it }
                 saveDownloadQueue(applicationContext, queue)
                 return Result.retry()
+            }
+            if (loadQueuePaused(applicationContext) || getQueueControl(applicationContext) == "pause") {
+                setQueueControl(applicationContext, "")
+                return Result.success()
+            }
+            val item = loadDownloadQueue(applicationContext).firstOrNull {
+                it.id == queuedItem.id && it.status == "Queued"
+            } ?: continue
+            if (getQueueControl(applicationContext) == "cancel_current") {
+                setQueueControl(applicationContext, "")
+                queue = loadDownloadQueue(applicationContext).map {
+                    if (it.id == item.id) it.copy(status = "Cancelled", error = "Cancelled by user.") else it
+                }
+                saveDownloadQueue(applicationContext, queue)
+                continue
             }
             queue = loadDownloadQueue(applicationContext).map { if (it.id == item.id) it.copy(status = "Downloading", error = "") else it }
             saveDownloadQueue(applicationContext, queue)
@@ -1085,10 +1178,31 @@ class DownloadQueueWorker(appContext: Context, params: WorkerParameters) : Corou
                 saveDownloadQueue(applicationContext, queue)
                 throw cancelled
             } catch (e: Exception) {
-                val message = e.message?.lineSequence()?.firstOrNull()?.take(250) ?: "Download failed."
-                queue = loadDownloadQueue(applicationContext).map { if (it.id == item.id) it.copy(status = "Failed", error = message) else it }
-                saveDownloadQueue(applicationContext, queue)
-                failed++
+                val command = getQueueControl(applicationContext)
+                when (command) {
+                    "pause" -> {
+                        setQueueControl(applicationContext, "")
+                        setQueuePaused(applicationContext, true)
+                        queue = loadDownloadQueue(applicationContext).map {
+                            if (it.id == item.id && it.status == "Downloading") it.copy(status = "Queued", error = "") else it
+                        }
+                        saveDownloadQueue(applicationContext, queue)
+                        return Result.success()
+                    }
+                    "cancel_current" -> {
+                        setQueueControl(applicationContext, "")
+                        queue = loadDownloadQueue(applicationContext).map {
+                            if (it.id == item.id && it.status == "Downloading") it.copy(status = "Cancelled", error = "Cancelled by user.") else it
+                        }
+                        saveDownloadQueue(applicationContext, queue)
+                    }
+                    else -> {
+                        val message = e.message?.lineSequence()?.firstOrNull()?.take(250) ?: "Download failed."
+                        queue = loadDownloadQueue(applicationContext).map { if (it.id == item.id) it.copy(status = "Failed", error = message) else it }
+                        saveDownloadQueue(applicationContext, queue)
+                        failed++
+                    }
+                }
             }
         }
         val summary = if (failed == 0) "Queue completed · ${completed} downloaded" else "Queue finished · ${completed} downloaded · ${failed} failed"
