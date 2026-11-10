@@ -117,6 +117,8 @@ private fun DownloaderHome() {
     val appContext = LocalContext.current.applicationContext
     val context = LocalContext.current
     var history by remember { mutableStateOf(loadDownloadHistory(appContext)) }
+    var downloadQueue by remember { mutableStateOf(loadDownloadQueue(appContext)) }
+    var isQueueRunning by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -270,131 +272,97 @@ private fun DownloaderHome() {
                 codec = outputCodec,
                 onStart = {
                     val selectedUrl = videoUrl.trim()
-                    isDownloading = true
-                    downloadProgress = 0f
-                    downloadEta = null
-                    downloadedLocation = null
-                    downloadStatus = "Preparing download…"
-                    scope.launch {
-                        try {
-                            val saved = withContext(Dispatchers.IO) {
-                                YoutubeDL.init(appContext)
-                                FFmpeg.getInstance().init(appContext)
-                                val outputDir = File(
-                                    appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                                        ?: appContext.filesDir,
-                                    "ytdlp-stage4"
-                                ).apply { mkdirs() }
-                                val previousNames = outputDir.listFiles()
-                                    ?.map { it.name }?.toSet().orEmpty()
-                                val request = YoutubeDLRequest(selectedUrl).apply {
-                                    addOption("--no-playlist")
-                                    addOption("--no-mtime")
-                                    addOption("--newline")
-                                    addOption("-o", File(outputDir,
-                                        "%(title).180B [%(id)s]-%(epoch)s.%(ext)s").absolutePath)
-                                    addOption("-f", buildFormatSelector(qualityMode, manualResolution))
-                                    if (qualityMode == QualityMode.BEST_EFFICIENT) {
-                                        addOption("-S", "vcodec:av01,res,br")
-                                    }
-                                }
-                                val processId = "ytdlp-${System.currentTimeMillis()}"
-                                YoutubeDL.getInstance().execute(request, processId) { progress, eta, line ->
-                                    scope.launch {
-                                        downloadProgress = if (outputCodec == OutputCodec.HEVC) {
-                                            progress.coerceIn(0f, 100f) * 0.5f
-                                        } else {
-                                            progress.coerceIn(0f, 100f)
-                                        }
-                                        downloadEta = eta
-                                        if (line.isNotBlank()) downloadStatus = line.take(180)
-                                    }
-                                }
-                                val outputFile = outputDir.listFiles()
-                                    ?.filter { file ->
-                                        file.isFile && file.name !in previousNames &&
-                                            !file.name.endsWith(".part", true) &&
-                                            !file.name.endsWith(".ytdl", true) &&
-                                            !file.name.endsWith(".temp", true)
-                                    }
-                                    ?.maxByOrNull { it.lastModified() }
-                                    ?: throw IllegalStateException(
-                                        "yt-dlp finished but no completed output file was found."
-                                    )
-                                if (outputCodec == OutputCodec.HEVC) {
-                                    scope.launch {
-                                        downloadStatus = "Download finished. Converting video to HEVC…"
-                                    }
-                                    try {
-                                        val hevcFile = transcodeToHevc(
-                                            context = appContext,
-                                            source = outputFile,
-                                            outputDir = outputDir,
-                                            durationSeconds = info.duration.toLong()
-                                        ) { conversionProgress, conversionStatus ->
-                                            scope.launch {
-                                                downloadProgress = 50f + conversionProgress * 0.5f
-                                                downloadStatus = conversionStatus
-                                            }
-                                        }
-                                        val savedMedia = publishToDownloads(appContext, hevcFile)
-                                        outputFile.delete()
-                                        DownloadOutcome(
-                                            savedMedia.location,
-                                            "Download and HEVC conversion completed successfully.",
-                                            savedMedia.uri
-                                        )
-                                    } catch (conversionError: Exception) {
-                                        val savedMedia = publishToDownloads(appContext, outputFile)
-                                        DownloadOutcome(
-                                            savedMedia.location,
-                                            "HEVC conversion failed; the original video was saved instead. " +
-                                                (conversionError.message ?: "Unknown FFmpeg error").take(220),
-                                            savedMedia.uri
-                                        )
-                                    }
-                                } else {
-                                    val savedMedia = publishToDownloads(appContext, outputFile)
-                                    DownloadOutcome(
-                                        savedMedia.location,
-                                        "Download completed successfully.",
-                                        savedMedia.uri
-                                    )
-                                }
-                            }
-                            downloadProgress = 100f
-                            downloadEta = 0L
-                            downloadedLocation = saved.location
-                            downloadStatus = saved.status
-                            val historyItem = DownloadHistoryItem(
-                                id = System.currentTimeMillis().toString(),
-                                title = info.title ?: info.fulltitle ?: "Downloaded video",
-                                url = selectedUrl,
-                                location = saved.location,
-                                uri = saved.uri,
-                                sizeBytes = runCatching {
-                                    appContext.contentResolver.openFileDescriptor(
-                                        Uri.parse(saved.uri), "r"
-                                    )?.use { descriptor -> descriptor.statSize }?.takeIf { it > 0L }
-                                        ?: saved.location.takeIf { it.startsWith("/") }
-                                            ?.let { File(it).length() }
-                                        ?: 0L
-                                }.getOrDefault(0L),
-                                createdAt = System.currentTimeMillis(),
-                                status = saved.status
-                            )
-                            history = (listOf(historyItem) + history).take(100)
-                            saveDownloadHistory(appContext, history)
-                        } catch (exception: Exception) {
-                            downloadStatus = exception.message?.lineSequence()
-                                ?.firstOrNull()?.take(300) ?: "Download failed."
-                        } finally {
-                            isDownloading = false
-                        }
+                    if (isValidHttpUrl(selectedUrl)) {
+                        val queued = QueueDownloadItem(
+                            id = System.currentTimeMillis().toString(),
+                            url = selectedUrl,
+                            title = info.title ?: info.fulltitle ?: "Video",
+                            qualityMode = qualityMode.name,
+                            outputCodec = outputCodec.name,
+                            manualResolution = manualResolution,
+                            durationSeconds = info.duration.toLong(),
+                            status = "Queued",
+                            error = ""
+                        )
+                        downloadQueue = downloadQueue + queued
+                        saveDownloadQueue(appContext, downloadQueue)
+                        downloadStatus = "Added to download queue."
+                    } else {
+                        downloadStatus = "Check the video link before adding it to the queue."
                     }
                 }
             )
         }
+
+        DownloadQueueCard(
+            items = downloadQueue,
+            isRunning = isQueueRunning,
+            progress = downloadProgress,
+            etaSeconds = downloadEta,
+            currentStatus = downloadStatus,
+            onStart = {
+                if (!isQueueRunning && downloadQueue.any { it.status == "Queued" }) {
+                    isQueueRunning = true
+                    scope.launch {
+                        while (true) {
+                            val next = downloadQueue.firstOrNull { it.status == "Queued" } ?: break
+                            downloadQueue = downloadQueue.map { if (it.id == next.id) it.copy(status = "Downloading", error = "") else it }
+                            saveDownloadQueue(appContext, downloadQueue)
+                            isDownloading = true
+                            downloadProgress = 0f
+                            downloadEta = null
+                            try {
+                                val outcome = withContext(Dispatchers.IO) {
+                                    performQueuedDownload(appContext, next) { p, eta, line ->
+                                        scope.launch {
+                                            downloadProgress = p
+                                            downloadEta = eta
+                                            if (line.isNotBlank()) downloadStatus = line.take(180)
+                                        }
+                                    }
+                                }
+                                val size = runCatching {
+                                    appContext.contentResolver.openFileDescriptor(Uri.parse(outcome.uri), "r")?.use { it.statSize }?.takeIf { it > 0L }
+                                        ?: outcome.location.takeIf { it.startsWith("/") }?.let { File(it).length() } ?: 0L
+                                }.getOrDefault(0L)
+                                val record = DownloadHistoryItem(
+                                    id = System.currentTimeMillis().toString(), title = next.title, url = next.url,
+                                    location = outcome.location, uri = outcome.uri, sizeBytes = size,
+                                    createdAt = System.currentTimeMillis(), status = outcome.status
+                                )
+                                history = (listOf(record) + history).take(100)
+                                saveDownloadHistory(appContext, history)
+                                downloadQueue = downloadQueue.map { if (it.id == next.id) it.copy(status = "Completed", error = "") else it }
+                                downloadedLocation = outcome.location
+                                downloadProgress = 100f
+                                downloadStatus = outcome.status
+                            } catch (e: Exception) {
+                                val message = e.message?.lineSequence()?.firstOrNull()?.take(250) ?: "Download failed."
+                                downloadQueue = downloadQueue.map { if (it.id == next.id) it.copy(status = "Failed", error = message) else it }
+                                downloadStatus = "Failed: " + message
+                            } finally {
+                                saveDownloadQueue(appContext, downloadQueue)
+                                isDownloading = false
+                            }
+                        }
+                        isQueueRunning = false
+                        downloadStatus = if (downloadQueue.any { it.status == "Failed" }) "Queue finished. Retry failed items when ready." else "Download queue completed."
+                    }
+                }
+            },
+            onRetry = { item ->
+                downloadQueue = downloadQueue.map { if (it.id == item.id) it.copy(status = "Queued", error = "") else it }
+                saveDownloadQueue(appContext, downloadQueue)
+            },
+            onRemove = { item ->
+                downloadQueue = downloadQueue.filterNot { it.id == item.id }
+                saveDownloadQueue(appContext, downloadQueue)
+            },
+            onClearCompleted = {
+                downloadQueue = downloadQueue.filter { it.status != "Completed" }
+                saveDownloadQueue(appContext, downloadQueue)
+            }
+        )
 
         DownloadHistoryCard(
             items = history,
@@ -962,6 +930,106 @@ private fun formatBytes(bytes: Long): String {
 }
 
 
+private data class QueueDownloadItem(
+    val id: String, val url: String, val title: String, val qualityMode: String,
+    val outputCodec: String, val manualResolution: Int, val durationSeconds: Long,
+    val status: String, val error: String
+)
+
+private fun loadDownloadQueue(context: android.content.Context): List<QueueDownloadItem> = runCatching {
+    val raw = context.getSharedPreferences("download_queue", android.content.Context.MODE_PRIVATE).getString("items", "[]") ?: "[]"
+    val array = org.json.JSONArray(raw)
+    (0 until array.length()).mapNotNull { i ->
+        val o = array.optJSONObject(i) ?: return@mapNotNull null
+        val status = o.optString("status", "Queued")
+        QueueDownloadItem(
+            id = o.optString("id"), url = o.optString("url"), title = o.optString("title", "Video"),
+            qualityMode = o.optString("qualityMode", "BEST_AVAILABLE"), outputCodec = o.optString("outputCodec", "ORIGINAL"),
+            manualResolution = o.optInt("manualResolution", 1080), durationSeconds = o.optLong("durationSeconds"),
+            status = if (status == "Downloading") "Queued" else status, error = o.optString("error")
+        )
+    }
+}.getOrDefault(emptyList())
+
+private fun saveDownloadQueue(context: android.content.Context, items: List<QueueDownloadItem>) {
+    val array = org.json.JSONArray()
+    items.forEach { item -> array.put(org.json.JSONObject().apply {
+        put("id", item.id); put("url", item.url); put("title", item.title)
+        put("qualityMode", item.qualityMode); put("outputCodec", item.outputCodec)
+        put("manualResolution", item.manualResolution); put("durationSeconds", item.durationSeconds)
+        put("status", item.status); put("error", item.error)
+    }) }
+    context.getSharedPreferences("download_queue", android.content.Context.MODE_PRIVATE).edit().putString("items", array.toString()).apply()
+}
+
+@Composable
+private fun DownloadQueueCard(
+    items: List<QueueDownloadItem>, isRunning: Boolean, progress: Float, etaSeconds: Long?,
+    currentStatus: String, onStart: () -> Unit, onRetry: (QueueDownloadItem) -> Unit,
+    onRemove: (QueueDownloadItem) -> Unit, onClearCompleted: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Download queue", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                if (items.any { it.status == "Completed" }) TextButton(onClick = onClearCompleted) { Text("Clear completed") }
+            }
+            if (items.isEmpty()) Text("Check a video and tap Add to queue to place it here.", style = MaterialTheme.typography.bodySmall)
+            items.forEach { item ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(item.title, fontWeight = FontWeight.Medium)
+                    Text(item.status + if (item.error.isNotBlank()) " · " + item.error else "", style = MaterialTheme.typography.bodySmall,
+                        color = if (item.status == "Failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (item.status == "Failed") TextButton(onClick = { onRetry(item) }, enabled = !isRunning) { Text("Retry") }
+                        if (item.status != "Downloading") TextButton(onClick = { onRemove(item) }, enabled = !isRunning) { Text("Remove") }
+                    }
+                }
+                if (item != items.last()) androidx.compose.material3.HorizontalDivider()
+            }
+            if (isRunning) {
+                LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
+                Text(progress.toInt().toString() + "% · " + currentStatus + (etaSeconds?.takeIf { it > 0 }?.let { " · ETA " + formatDuration(it.toInt()) } ?: ""), style = MaterialTheme.typography.bodySmall)
+            }
+            Button(onClick = onStart, modifier = Modifier.fillMaxWidth(), enabled = !isRunning && items.any { it.status == "Queued" }) { Text(if (isRunning) "Queue running…" else "Start queued downloads") }
+            Text("Downloads run one at a time. The queue is saved on this device; interrupted items return to Queued after reopening the app.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+private suspend fun performQueuedDownload(context: android.content.Context, item: QueueDownloadItem, onProgress: (Float, Long?, String) -> Unit): DownloadOutcome {
+    val quality = runCatching { QualityMode.valueOf(item.qualityMode) }.getOrDefault(QualityMode.BEST_AVAILABLE)
+    val codec = runCatching { OutputCodec.valueOf(item.outputCodec) }.getOrDefault(OutputCodec.ORIGINAL)
+    return withContext(Dispatchers.IO) {
+        YoutubeDL.init(context); FFmpeg.getInstance().init(context)
+        val outputDir = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir, "ytdlp-stage4").apply { mkdirs() }
+        val before = outputDir.listFiles()?.map { it.name }?.toSet().orEmpty()
+        val request = YoutubeDLRequest(item.url).apply {
+            addOption("--no-playlist"); addOption("--no-mtime"); addOption("--newline")
+            addOption("-o", File(outputDir, "%(title).180B [%(id)s]-%(epoch)s.%(ext)s").absolutePath)
+            addOption("-f", buildFormatSelector(quality, item.manualResolution))
+            if (quality == QualityMode.BEST_EFFICIENT) addOption("-S", "vcodec:av01,res,br")
+        }
+        YoutubeDL.getInstance().execute(request, "ytdlp-" + item.id) { p, eta, line ->
+            onProgress(if (codec == OutputCodec.HEVC) p.coerceIn(0f, 100f) * 0.5f else p.coerceIn(0f, 100f), eta, line)
+        }
+        val source = outputDir.listFiles()?.filter { it.isFile && it.name !in before && !it.name.endsWith(".part", true) && !it.name.endsWith(".ytdl", true) && !it.name.endsWith(".temp", true) }?.maxByOrNull { it.lastModified() }
+            ?: throw IllegalStateException("yt-dlp finished but no completed output file was found.")
+        if (codec == OutputCodec.HEVC) {
+            try {
+                val hevc = transcodeToHevc(context, source, outputDir, item.durationSeconds.toInt()) { p, status -> onProgress(50f + p * 0.5f, null, status) }
+                val saved = publishToDownloads(context, hevc); source.delete()
+                DownloadOutcome(saved.location, "Download and HEVC conversion completed successfully.", saved.uri)
+            } catch (e: Exception) {
+                val saved = publishToDownloads(context, source)
+                DownloadOutcome(saved.location, "HEVC conversion failed; original video saved. " + (e.message ?: "FFmpeg error").take(200), saved.uri)
+            }
+        } else {
+            val saved = publishToDownloads(context, source)
+            DownloadOutcome(saved.location, "Download completed successfully.", saved.uri)
+        }
+    }
+}
 private data class DownloadHistoryItem(
     val id: String,
     val title: String,
