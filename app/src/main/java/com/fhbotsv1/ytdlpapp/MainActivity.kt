@@ -1,6 +1,7 @@
 package com.fhbotsv1.ytdlpapp
 
 import android.content.ContentValues
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -8,6 +9,7 @@ import android.provider.MediaStore
 import java.io.File
 import java.net.URLConnection
 import android.os.Bundle
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +50,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import androidx.core.content.FileProvider
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
@@ -70,7 +73,13 @@ private enum class OutputCodec(val label: String) {
 
 private data class DownloadOutcome(
     val location: String,
-    val status: String
+    val status: String,
+    val uri: String
+)
+
+private data class SavedMedia(
+    val location: String,
+    val uri: String
 )
 
 class MainActivity : ComponentActivity() {
@@ -106,6 +115,8 @@ private fun DownloaderHome() {
     var manualResolution by remember { mutableStateOf(1080) }
     val scope = rememberCoroutineScope()
     val appContext = LocalContext.current.applicationContext
+    val context = LocalContext.current
+    var history by remember { mutableStateOf(loadDownloadHistory(appContext)) }
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -326,24 +337,28 @@ private fun DownloaderHome() {
                                                 downloadStatus = conversionStatus
                                             }
                                         }
-                                        val location = publishToDownloads(appContext, hevcFile)
+                                        val savedMedia = publishToDownloads(appContext, hevcFile)
                                         outputFile.delete()
                                         DownloadOutcome(
-                                            location,
-                                            "Download and HEVC conversion completed successfully."
+                                            savedMedia.location,
+                                            "Download and HEVC conversion completed successfully.",
+                                            savedMedia.uri
                                         )
                                     } catch (conversionError: Exception) {
-                                        val location = publishToDownloads(appContext, outputFile)
+                                        val savedMedia = publishToDownloads(appContext, outputFile)
                                         DownloadOutcome(
-                                            location,
+                                            savedMedia.location,
                                             "HEVC conversion failed; the original video was saved instead. " +
-                                                (conversionError.message ?: "Unknown FFmpeg error").take(220)
+                                                (conversionError.message ?: "Unknown FFmpeg error").take(220),
+                                            savedMedia.uri
                                         )
                                     }
                                 } else {
+                                    val savedMedia = publishToDownloads(appContext, outputFile)
                                     DownloadOutcome(
-                                        publishToDownloads(appContext, outputFile),
-                                        "Download completed successfully."
+                                        savedMedia.location,
+                                        "Download completed successfully.",
+                                        savedMedia.uri
                                     )
                                 }
                             }
@@ -351,6 +366,23 @@ private fun DownloaderHome() {
                             downloadEta = 0L
                             downloadedLocation = saved.location
                             downloadStatus = saved.status
+                            val historyItem = DownloadHistoryItem(
+                                id = System.currentTimeMillis().toString(),
+                                title = info.title ?: info.fulltitle ?: "Downloaded video",
+                                url = selectedUrl,
+                                location = saved.location,
+                                uri = saved.uri,
+                                sizeBytes = saved.location.let { location ->
+                                    runCatching {
+                                        if (location.startsWith("/")) File(location).length()
+                                        else 0L
+                                    }.getOrDefault(0L)
+                                },
+                                createdAt = System.currentTimeMillis(),
+                                status = saved.status
+                            )
+                            history = (listOf(historyItem) + history).take(100)
+                            saveDownloadHistory(appContext, history)
                         } catch (exception: Exception) {
                             downloadStatus = exception.message?.lineSequence()
                                 ?.firstOrNull()?.take(300) ?: "Download failed."
@@ -361,6 +393,20 @@ private fun DownloaderHome() {
                 }
             )
         }
+
+        DownloadHistoryCard(
+            items = history,
+            onOpen = { item -> openDownloadedFile(context, item) },
+            onShare = { item -> shareDownloadedFile(context, item) },
+            onRemove = { item ->
+                history = history.filterNot { it.id == item.id }
+                saveDownloadHistory(appContext, history)
+            },
+            onClear = {
+                history = emptyList()
+                saveDownloadHistory(appContext, history)
+            }
+        )
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp),
@@ -558,10 +604,17 @@ private fun runHevcEncoding(
     return HevcProcessResult(exitCode, recentOutput.joinToString("\n"))
 }
 
-private fun publishToDownloads(context: android.content.Context, source: File): String {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return source.absolutePath
+private fun publishToDownloads(context: android.content.Context, source: File): SavedMedia {
     val mimeType = URLConnection.guessContentTypeFromName(source.name)
         ?: "application/octet-stream"
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+        val contentUri = FileProvider.getUriForFile(
+            context,
+            context.packageName + ".fileprovider",
+            source
+        )
+        return SavedMedia(source.absolutePath, contentUri.toString())
+    }
     val values = ContentValues().apply {
         put(MediaStore.MediaColumns.DISPLAY_NAME, source.name)
         put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
@@ -581,7 +634,7 @@ private fun publishToDownloads(context: android.content.Context, source: File): 
         }
         resolver.update(uri, completeValues, null, null)
         source.delete()
-        return "Downloads/YTDLP Downloader/${source.name}"
+        return SavedMedia("Downloads/YTDLP Downloader/${source.name}", uri.toString())
     } catch (exception: Exception) {
         resolver.delete(uri, null, null)
         throw exception
@@ -904,4 +957,150 @@ private fun formatBytes(bytes: Long): String {
     val megabytes = bytes / (1024.0 * 1024.0)
     return if (megabytes >= 1024.0) "%.2f GB".format(megabytes / 1024.0)
     else "%.1f MB".format(megabytes)
+}
+
+
+private data class DownloadHistoryItem(
+    val id: String,
+    val title: String,
+    val url: String,
+    val location: String,
+    val uri: String,
+    val sizeBytes: Long,
+    val createdAt: Long,
+    val status: String
+)
+
+private const val HISTORY_PREFS = "download_history"
+private const val HISTORY_KEY = "items"
+
+private fun loadDownloadHistory(context: android.content.Context): List<DownloadHistoryItem> {
+    return runCatching {
+        val raw = context.getSharedPreferences(HISTORY_PREFS, android.content.Context.MODE_PRIVATE)
+            .getString(HISTORY_KEY, "[]") ?: "[]"
+        val array = org.json.JSONArray(raw)
+        (0 until array.length()).mapNotNull { index ->
+            val item = array.optJSONObject(index) ?: return@mapNotNull null
+            DownloadHistoryItem(
+                id = item.optString("id"),
+                title = item.optString("title", "Downloaded video"),
+                url = item.optString("url"),
+                location = item.optString("location"),
+                uri = item.optString("uri"),
+                sizeBytes = item.optLong("sizeBytes"),
+                createdAt = item.optLong("createdAt"),
+                status = item.optString("status", "Completed")
+            )
+        }
+    }.getOrDefault(emptyList())
+}
+
+private fun saveDownloadHistory(
+    context: android.content.Context,
+    items: List<DownloadHistoryItem>
+) {
+    val array = org.json.JSONArray()
+    items.forEach { item ->
+        array.put(org.json.JSONObject().apply {
+            put("id", item.id)
+            put("title", item.title)
+            put("url", item.url)
+            put("location", item.location)
+            put("uri", item.uri)
+            put("sizeBytes", item.sizeBytes)
+            put("createdAt", item.createdAt)
+            put("status", item.status)
+        })
+    }
+    context.getSharedPreferences(HISTORY_PREFS, android.content.Context.MODE_PRIVATE)
+        .edit().putString(HISTORY_KEY, array.toString()).apply()
+}
+
+@Composable
+private fun DownloadHistoryCard(
+    items: List<DownloadHistoryItem>,
+    onOpen: (DownloadHistoryItem) -> Unit,
+    onShare: (DownloadHistoryItem) -> Unit,
+    onRemove: (DownloadHistoryItem) -> Unit,
+    onClear: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Download history", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold)
+                if (items.isNotEmpty()) {
+                    TextButton(onClick = onClear) { Text("Clear history") }
+                }
+            }
+            if (items.isEmpty()) {
+                Text("Completed downloads will appear here.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                items.forEach { item ->
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(item.title, fontWeight = FontWeight.Medium,
+                            style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.createdAt))}" +
+                                if (item.sizeBytes > 0L) " · ${formatBytes(item.sizeBytes)}" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(item.location, style = MaterialTheme.typography.bodySmall)
+                        Text(item.status, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { onOpen(item) }) { Text("Open") }
+                            OutlinedButton(onClick = { onShare(item) }) { Text("Share") }
+                            TextButton(onClick = { onRemove(item) }) { Text("Remove") }
+                        }
+                    }
+                    if (item != items.last()) {
+                        androidx.compose.material3.HorizontalDivider()
+                    }
+                }
+            }
+            Text("Removing an entry only removes it from this list; it does not delete the downloaded file.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+private fun openDownloadedFile(
+    context: android.content.Context,
+    item: DownloadHistoryItem
+) {
+    val uri = Uri.parse(item.uri)
+    val mimeType = URLConnection.guessContentTypeFromName(item.location)
+        ?: "video/*"
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, mimeType)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching { context.startActivity(Intent.createChooser(intent, "Open video").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+}
+
+private fun shareDownloadedFile(
+    context: android.content.Context,
+    item: DownloadHistoryItem
+) {
+    val uri = Uri.parse(item.uri)
+    val mimeType = URLConnection.guessContentTypeFromName(item.location)
+        ?: "video/*"
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = mimeType
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "Share video").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
