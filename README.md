@@ -34,7 +34,6 @@ A native Android video downloader built with Kotlin and Jetpack Compose, using y
 - [x] Persistent background queue processing through WorkManager foreground execution
 - [x] Ongoing progress notification and completion notification
 - [x] Notification permission request on Android 13+
-- [ ] Pause/resume/cancel controls
 
 **Stage 8 — Background downloads and notifications**
 - [x] Run the persistent queue through WorkManager instead of an Activity coroutine
@@ -70,8 +69,15 @@ A native Android video downloader built with Kotlin and Jetpack Compose, using y
 - [x] If conversion fails, preserve and save the original download instead
 - [ ] Verify `libx265` availability and conversion behavior on target devices
 
+**Stage 9 — Queue controls**
+- [x] Pause and resume the sequential queue, including stopping the active yt-dlp process
+- [x] Cancel the current yt-dlp item while allowing the remaining queue to continue
+- [x] Retry cancelled or failed items
+- [x] Remove waiting queue items while another item is downloading
+- [x] Skip queue entries removed before their turn
+- [x] Disable pause/cancel during HEVC conversion, which currently runs as a separate FFmpeg process
+
 **Planned later stages**
-- [ ] Pause/resume/cancel controls
 - [ ] Improved format/codec controls and user-configurable HEVC quality
 
 ## Background behavior
