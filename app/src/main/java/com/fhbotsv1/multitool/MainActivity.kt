@@ -2245,7 +2245,7 @@ private fun StopwatchScreen(onBack: () -> Unit) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "\${laps.size} laps",
+                        "${laps.size} laps",
                         color = Accent,
                         fontSize = 11.sp
                     )
@@ -2266,7 +2266,7 @@ private fun StopwatchScreen(onBack: () -> Unit) {
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                "Lap \${index + 1}",
+                                "Lap ${index + 1}",
                                 color = Color.White,
                                 fontSize = 14.sp
                             )
