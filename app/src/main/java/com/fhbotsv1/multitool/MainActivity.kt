@@ -2302,7 +2302,7 @@ private fun CountdownTimerScreen(onBack: () -> Unit) {
     var hoursText by remember { mutableStateOf("00") }
     var minutesText by remember { mutableStateOf("05") }
     var secondsText by remember { mutableStateOf("00") }
-    var remainingMillis by remember { mutableLongStateOf(300_000L) }
+    var remainingMillis by remember { mutableLongStateOf(0L) }
     var deadline by remember { mutableLongStateOf(0L) }
     var isRunning by remember { mutableStateOf(false) }
     var showFinished by remember { mutableStateOf(false) }
@@ -2414,9 +2414,9 @@ private fun CountdownTimerScreen(onBack: () -> Unit) {
                             )
                         }
                     }
-                    TimeInput("Hours", hoursText) { hoursText = it }
-                    TimeInput("Minutes", minutesText) { minutesText = it }
-                    TimeInput("Seconds", secondsText) { secondsText = it }
+                    TimeInput("Hours", hoursText) { hoursText = it; remainingMillis = 0L }
+                    TimeInput("Minutes", minutesText) { minutesText = it; remainingMillis = 0L }
+                    TimeInput("Seconds", secondsText) { secondsText = it; remainingMillis = 0L }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("Minutes and seconds must be between 00 and 59.", color = SecondaryText, fontSize = 11.sp)
@@ -2449,7 +2449,7 @@ private fun CountdownTimerScreen(onBack: () -> Unit) {
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Text(
-                    if (isRunning) "Pause" else if (remainingMillis > 0L && remainingMillis != 300_000L) "Resume" else "Start",
+                    if (isRunning) "Pause" else if (remainingMillis > 0L) "Resume" else "Start",
                     color = Color(0xFF101522),
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp
