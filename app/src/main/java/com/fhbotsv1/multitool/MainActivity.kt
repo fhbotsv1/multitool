@@ -8,6 +8,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
+import android.os.SystemClock
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -19,6 +20,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -278,6 +281,7 @@ fun MultiToolApp() {
                 "Sound Meter" -> SoundMeterScreen(onBack = { selectedTool = null })
                 "Barometer" -> BarometerScreen(onBack = { selectedTool = null })
                 "Vibration Meter" -> VibrationMeterScreen(onBack = { selectedTool = null })
+                "Stopwatch" -> StopwatchScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
@@ -2087,6 +2091,203 @@ private fun VibrationMeterScreen(onBack: () -> Unit) {
         Spacer(modifier = Modifier.weight(1f))
         Text(
             "Place the phone on a stable surface, then gently tap or move the surface to test. Values are approximate and depend on sensor quality, mounting and phone movement. This is not a certified machinery or structural vibration analyser.",
+            color = SecondaryText,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+        )
+    }
+}
+
+
+@Composable
+private fun StopwatchScreen(onBack: () -> Unit) {
+    var isRunning by remember { mutableStateOf(false) }
+    var elapsedBeforeStart by remember { mutableLongStateOf(0L) }
+    var displayMillis by remember { mutableLongStateOf(0L) }
+    var startMark by remember { mutableLongStateOf(0L) }
+    var lastLapMillis by remember { mutableLongStateOf(0L) }
+    val laps = remember { mutableStateListOf<Long>() }
+
+    LaunchedEffect(isRunning) {
+        if (isRunning) {
+            while (true) {
+                displayMillis = elapsedBeforeStart + (SystemClock.elapsedRealtime() - startMark)
+                kotlinx.coroutines.delay(16L)
+            }
+        }
+    }
+
+    fun formatTime(totalMillis: Long): String {
+        val minutes = totalMillis / 60000L
+        val seconds = (totalMillis % 60000L) / 1000L
+        val centiseconds = (totalMillis % 1000L) / 10L
+        return String.format("%02d:%02d.%02d", minutes, seconds, centiseconds)
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Background)
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onBack) {
+                Text("‹  Back", color = Accent, fontSize = 16.sp)
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            Text(
+                "STOPWATCH",
+                color = SecondaryText,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(modifier = Modifier.height(54.dp))
+
+        Text(
+            "ELAPSED TIME",
+            color = SecondaryText,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(14.dp))
+        Text(
+            formatTime(displayMillis),
+            color = Color.White,
+            fontSize = 48.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+        Text(
+            "Minutes : Seconds . Centiseconds",
+            color = SecondaryText,
+            fontSize = 11.sp
+        )
+
+        Spacer(modifier = Modifier.height(42.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Button(
+                onClick = {
+                    if (isRunning) {
+                        elapsedBeforeStart = displayMillis
+                        isRunning = false
+                    } else {
+                        startMark = SystemClock.elapsedRealtime()
+                        isRunning = true
+                    }
+                },
+                modifier = Modifier.weight(1f).height(54.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text(
+                    if (isRunning) "Pause" else if (elapsedBeforeStart > 0L) "Resume" else "Start",
+                    color = Color(0xFF101522),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            }
+
+            OutlinedButton(
+                onClick = {
+                    if (isRunning) {
+                        val currentElapsed = elapsedBeforeStart +
+                            (SystemClock.elapsedRealtime() - startMark)
+                        laps.add(currentElapsed - lastLapMillis)
+                        lastLapMillis = currentElapsed
+                    } else {
+                        elapsedBeforeStart = 0L
+                        displayMillis = 0L
+                        lastLapMillis = 0L
+                        laps.clear()
+                    }
+                },
+                enabled = isRunning || displayMillis > 0L || laps.isNotEmpty(),
+                modifier = Modifier.weight(1f).height(54.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text(
+                    if (isRunning) "Lap" else "Reset",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(28.dp))
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "LAP TIMES",
+                        color = SecondaryText,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "\${laps.size} laps",
+                        color = Accent,
+                        fontSize = 11.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (laps.isEmpty()) {
+                    Text(
+                        "Lap times will appear here while the stopwatch is running.",
+                        color = SecondaryText,
+                        fontSize = 12.sp
+                    )
+                } else {
+                    laps.forEachIndexed { index, lapMillis ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                "Lap \${index + 1}",
+                                color = Color.White,
+                                fontSize = 14.sp
+                            )
+                            Text(
+                                formatTime(lapMillis),
+                                color = Accent,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        if (index != laps.lastIndex) {
+                            HorizontalDivider(color = Color(0xFF303B4D))
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(
+            "The stopwatch uses Android's monotonic elapsed-time clock, so it continues accurately even if the phone's wall-clock time changes.",
             color = SecondaryText,
             fontSize = 11.sp,
             lineHeight = 16.sp
