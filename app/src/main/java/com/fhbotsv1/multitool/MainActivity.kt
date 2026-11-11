@@ -42,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.font.FontWeight
@@ -3764,7 +3765,8 @@ private fun ScreenRulerScreen(onBack: () -> Unit) {
                 }
                 for (mm in 0..totalTicks) {
                     val x = mm * step
-                    val isMajor = if (unit == "cm") mm % 10 == 0 else mm % 25.4f < 0.51f || 25.4f - (mm % 25.4f) < 0.51f
+                    val inchNumber = (mm / 25.4f + 0.5f).toInt()
+                    val isMajor = if (unit == "cm") mm % 10 == 0 else mm == (inchNumber * 25.4f + 0.5f).toInt()
                     val isMid = mm % 5 == 0
                     val tickHeight = when {
                         isMajor -> rulerHeight * 0.62f
@@ -3778,7 +3780,7 @@ private fun ScreenRulerScreen(onBack: () -> Unit) {
                         strokeWidth = if (isMajor) 2.dp.toPx() else 1.dp.toPx()
                     )
                     if (isMajor) {
-                        val label = if (unit == "cm") (mm / 10).toString() else (mm / 25.4f).toInt().toString()
+                        val label = if (unit == "cm") (mm / 10).toString() else inchNumber.toString()
                         drawContext.canvas.nativeCanvas.drawText(label, x + 1.dp.toPx(), rulerHeight * 0.88f, paint)
                     }
                 }
