@@ -4366,7 +4366,8 @@ private class ARMeasureRenderer(
     private var texCoordHandle = 0
     private var textureHandle = 0
     private val vertices = floatArrayOf(-1f,-1f, 1f,-1f, -1f,1f, 1f,1f)
-    private val uvs = floatArrayOf(0f,0f, 1f,0f, 0f,1f, 1f,1f)
+    // Flip the camera texture vertically so the AR preview is upright on portrait devices.
+    private val uvs = floatArrayOf(0f,1f, 1f,1f, 0f,0f, 1f,0f)
     private val vertexBuffer = java.nio.ByteBuffer.allocateDirect(vertices.size * 4).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer().apply { put(vertices); position(0) }
     private val uvBuffer = java.nio.ByteBuffer.allocateDirect(uvs.size * 4).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer().apply { put(uvs); position(0) }
 
