@@ -1,9 +1,18 @@
 
 package com.fhbotsv1.multitool
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.os.Bundle
+import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -16,6 +25,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -254,7 +264,9 @@ fun MultiToolApp() {
         }
 
         selectedTool?.let { tool ->
-            AlertDialog(
+            if (tool.name == "Speedometer") {
+                SpeedometerScreen(onBack = { selectedTool = null })
+            } else AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
                 title = {
@@ -392,6 +404,156 @@ fun SettingsScreen() {
                     )
                 }
             }
+        }
+    }
+}
+
+
+@Composable
+private fun SpeedometerScreen(onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val locationManager = remember { context.getSystemService(Context.LOCATION_SERVICE) as LocationManager }
+    var hasLocationPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var isTracking by remember { mutableStateOf(false) }
+    var currentSpeed by remember { mutableFloatStateOf(0f) }
+    var maxSpeed by remember { mutableFloatStateOf(0f) }
+    var tripDistance by remember { mutableFloatStateOf(0f) }
+    var gpsAccuracy by remember { mutableFloatStateOf(0f) }
+    var gpsStatus by remember { mutableStateOf("GPS not started") }
+    var lastLocation by remember { mutableStateOf<Location?>(null) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        hasLocationPermission =
+            permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (hasLocationPermission) {
+            isTracking = true
+            gpsStatus = "Acquiring GPS signal…"
+        } else gpsStatus = "Location permission denied"
+    }
+
+    DisposableEffect(isTracking, hasLocationPermission) {
+        if (!isTracking || !hasLocationPermission) {
+            onDispose { }
+        } else {
+            val listener = object : LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    val rawSpeed = if (location.hasSpeed()) location.speed * 3.6f else {
+                        val previous = lastLocation
+                        if (previous != null) {
+                            val seconds = (location.time - previous.time) / 1000f
+                            if (seconds > 0f) previous.distanceTo(location) / seconds * 3.6f else 0f
+                        } else 0f
+                    }
+                    currentSpeed = rawSpeed.coerceAtLeast(0f)
+                    if (currentSpeed > maxSpeed) maxSpeed = currentSpeed
+                    gpsAccuracy = location.accuracy
+                    val previous = lastLocation
+                    if (previous != null) {
+                        val segment = previous.distanceTo(location)
+                        if (segment in 0f..1000f) tripDistance += segment
+                    }
+                    lastLocation = Location(location)
+                    gpsStatus = if (location.accuracy > 30f) "GPS connected • Low accuracy" else "GPS connected • Good accuracy"
+                }
+            }
+            try {
+                if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                    gpsStatus = "GPS is disabled. Turn on Location."
+                } else {
+                    gpsStatus = "Acquiring GPS signal…"
+                    locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, listener, Looper.getMainLooper())
+                }
+            } catch (_: SecurityException) {
+                gpsStatus = "Location permission unavailable"
+            } catch (_: IllegalArgumentException) {
+                gpsStatus = "GPS provider unavailable"
+            }
+            onDispose {
+                try { locationManager.removeUpdates(listener) } catch (_: SecurityException) { }
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Background).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹  Back", color = Accent, fontSize = 16.sp) }
+            Spacer(modifier = Modifier.weight(1f))
+            Text("GPS SPEEDOMETER", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.height(24.dp))
+        Box(
+            modifier = Modifier.size(250.dp).background(Color(0xFF1B2B40), RoundedCornerShape(125.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(currentSpeed.toInt().toString(), color = Color.White, fontSize = 68.sp, fontWeight = FontWeight.Bold)
+                Text("km/h", color = Accent, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("CURRENT SPEED", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        Spacer(modifier = Modifier.height(18.dp))
+        Text(gpsStatus, color = if (gpsStatus.startsWith("GPS connected")) Color(0xFF81C784) else SecondaryText, fontSize = 13.sp)
+        if (gpsAccuracy > 0f) Text("Accuracy ±\${gpsAccuracy.toInt()} m", color = SecondaryText, fontSize = 11.sp)
+        Spacer(modifier = Modifier.height(24.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            SpeedStatCard("MAX SPEED", "\${maxSpeed.toInt()} km/h", Modifier.weight(1f))
+            SpeedStatCard("TRIP DISTANCE", String.format("%.2f km", tripDistance / 1000f), Modifier.weight(1f))
+        }
+        Spacer(modifier = Modifier.height(28.dp))
+        Button(
+            onClick = {
+                if (!hasLocationPermission) {
+                    permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                } else {
+                    isTracking = !isTracking
+                    if (!isTracking) gpsStatus = "Paused"
+                }
+            },
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Accent)
+        ) {
+            Text(when {
+                !hasLocationPermission -> "Allow location & Start"
+                isTracking -> "Pause"
+                else -> "Resume GPS"
+            }, color = Color(0xFF101522), fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        OutlinedButton(
+            onClick = {
+                currentSpeed = 0f
+                maxSpeed = 0f
+                tripDistance = 0f
+                lastLocation = null
+                gpsAccuracy = 0f
+                if (isTracking) gpsStatus = "Reset • Waiting for GPS"
+            },
+            modifier = Modifier.fillMaxWidth().height(48.dp)
+        ) { Text("Reset trip", color = Color.White) }
+        Spacer(modifier = Modifier.weight(1f))
+        Text("For best results, use outdoors with Location set to High accuracy.", color = SecondaryText, fontSize = 11.sp)
+    }
+}
+
+@Composable
+private fun SpeedStatCard(title: String, value: String, modifier: Modifier = Modifier) {
+    Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = SurfaceDark), shape = RoundedCornerShape(16.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(title, color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(value, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
