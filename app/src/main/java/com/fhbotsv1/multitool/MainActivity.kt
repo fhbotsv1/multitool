@@ -212,7 +212,7 @@ fun MultiToolApp() {
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        "20 TOOLS AVAILABLE",
+                                        "21 TOOLS AVAILABLE",
                                         color = Color(0xFF80C8FF),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
@@ -292,6 +292,7 @@ fun MultiToolApp() {
                 "Unit Converter" -> UnitConverterScreen(onBack = { selectedTool = null })
                 "Flashlight" -> FlashlightScreen(onBack = { selectedTool = null })
                 "QR Scanner" -> QrScannerScreen(onBack = { selectedTool = null })
+                "Color Detector" -> ColorDetectorScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
@@ -3281,5 +3282,287 @@ private fun QrScannerScreen(onBack: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+
+@Composable
+private fun ColorDetectorScreen(onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val lifecycleOwner = context as androidx.lifecycle.LifecycleOwner
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { hasCameraPermission = it }
+
+    var previewView by remember { mutableStateOf<androidx.camera.view.PreviewView?>(null) }
+    var cameraError by remember { mutableStateOf<String?>(null) }
+    var frozen by remember { mutableStateOf(false) }
+    var red by remember { mutableIntStateOf(0) }
+    var green by remember { mutableIntStateOf(0) }
+    var blue by remember { mutableIntStateOf(0) }
+    val favorites = remember { mutableStateListOf<IntArray>() }
+
+    fun colorName(r: Int, g: Int, b: Int): String {
+        val max = maxOf(r, g, b)
+        val min = minOf(r, g, b)
+        val delta = max - min
+        if (max < 35) return "Black"
+        if (min > 220) return "White"
+        if (delta < 22) return when {
+            max < 85 -> "Dark gray"
+            max < 170 -> "Gray"
+            else -> "Light gray"
+        }
+        if (r >= g && r >= b) return when {
+            g > 150 && b < 100 -> "Orange"
+            g > 100 && b < 90 -> "Yellow-orange"
+            g > 150 && b > 130 -> "Pink"
+            g > 90 -> "Yellow"
+            else -> "Red"
+        }
+        if (g >= r && g >= b) return when {
+            r > 150 && b < 100 -> "Yellow"
+            b > 100 -> "Teal"
+            else -> "Green"
+        }
+        return when {
+            r > 150 && g < 100 -> "Purple"
+            g > 100 -> "Blue"
+            else -> "Blue"
+        }
+    }
+
+    fun copyColor(value: String) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Color value", value))
+    }
+
+    LaunchedEffect(previewView, hasCameraPermission) {
+        val view = previewView
+        if (view != null && hasCameraPermission) {
+            try {
+                val providerFuture = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context)
+                providerFuture.addListener({
+                    try {
+                        val provider = providerFuture.get()
+                        val preview = androidx.camera.core.Preview.Builder().build().also {
+                            it.surfaceProvider = view.surfaceProvider
+                        }
+                        val analysis = androidx.camera.core.ImageAnalysis.Builder()
+                            .setBackpressureStrategy(androidx.camera.core.ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                            .build()
+                        analysis.setAnalyzer(ContextCompat.getMainExecutor(context)) { proxy ->
+                            try {
+                                if (!frozen && proxy.format == android.graphics.ImageFormat.YUV_420_888) {
+                                    val planeY = proxy.planes[0]
+                                    val planeU = proxy.planes[1]
+                                    val planeV = proxy.planes[2]
+                                    val cx = proxy.width / 2
+                                    val cy = proxy.height / 2
+                                    var sumR = 0
+                                    var sumG = 0
+                                    var sumB = 0
+                                    var samples = 0
+                                    for (dy in -2..2) {
+                                        for (dx in -2..2) {
+                                            val x = (cx + dx).coerceIn(0, proxy.width - 1)
+                                            val y = (cy + dy).coerceIn(0, proxy.height - 1)
+                                            val yIndex = y * planeY.rowStride + x * planeY.pixelStride
+                                            val uvX = x / 2
+                                            val uvY = y / 2
+                                            val uIndex = uvY * planeU.rowStride + uvX * planeU.pixelStride
+                                            val vIndex = uvY * planeV.rowStride + uvX * planeV.pixelStride
+                                            val yy = planeY.buffer.get(yIndex).toInt() and 0xFF
+                                            val uu = (planeU.buffer.get(uIndex).toInt() and 0xFF) - 128
+                                            val vv = (planeV.buffer.get(vIndex).toInt() and 0xFF) - 128
+                                            val yValue = (yy - 16).coerceAtLeast(0) * 1.164f
+                                            val rr = (yValue + 1.596f * vv).toInt().coerceIn(0, 255)
+                                            val gg = (yValue - 0.392f * uu - 0.813f * vv).toInt().coerceIn(0, 255)
+                                            val bb = (yValue + 2.017f * uu).toInt().coerceIn(0, 255)
+                                            sumR += rr
+                                            sumG += gg
+                                            sumB += bb
+                                            samples++
+                                        }
+                                    }
+                                    if (samples > 0 && !frozen) {
+                                        red = sumR / samples
+                                        green = sumG / samples
+                                        blue = sumB / samples
+                                    }
+                                }
+                            } catch (_: Exception) {
+                                cameraError = "Unable to read the camera color sample."
+                            } finally {
+                                proxy.close()
+                            }
+                        }
+                        provider.unbindAll()
+                        provider.bindToLifecycle(
+                            lifecycleOwner,
+                            androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA,
+                            preview,
+                            analysis
+                        )
+                        cameraError = null
+                    } catch (exception: Exception) {
+                        cameraError = exception.localizedMessage ?: "Unable to start the camera."
+                    }
+                }, ContextCompat.getMainExecutor(context))
+            } catch (exception: Exception) {
+                cameraError = exception.localizedMessage ?: "Camera is unavailable."
+            }
+        }
+    }
+
+    DisposableEffect(previewView, hasCameraPermission) {
+        onDispose {
+            runCatching {
+                androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context).get().unbindAll()
+            }
+        }
+    }
+
+    val sampledColor = Color(red, green, blue)
+    val hex = "#%02X%02X%02X".format(red, green, blue)
+    val rgb = "RGB($red, $green, $blue)"
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Background)
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onBack) { Text("‹  Back", color = Accent) }
+            Spacer(modifier = Modifier.weight(1f))
+            Text("COLOR DETECTOR", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        if (hasCameraPermission) {
+            Box {
+                AndroidView(
+                    factory = { viewContext ->
+                        androidx.camera.view.PreviewView(viewContext).apply {
+                            scaleType = androidx.camera.view.PreviewView.ScaleType.FILL_CENTER
+                            implementationMode = androidx.camera.view.PreviewView.ImplementationMode.COMPATIBLE
+                            previewView = this
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(310.dp).clip(RoundedCornerShape(20.dp))
+                )
+                Box(
+                    modifier = Modifier.align(Alignment.Center).size(34.dp)
+                        .background(Color.White.copy(alpha = 0.18f), RoundedCornerShape(17.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(modifier = Modifier.size(8.dp).background(Color.White, RoundedCornerShape(4.dp)))
+                }
+            }
+        } else {
+            Card(
+                modifier = Modifier.fillMaxWidth().height(220.dp),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(20.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Camera access is needed to detect colors.", color = Color.White)
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
+                        Text("Grant camera access")
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Aim the centre marker at a surface. The detector samples a small area around the centre of the live camera image.", color = SecondaryText, fontSize = 12.sp, lineHeight = 17.sp)
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier.size(66.dp)
+                            .background(sampledColor, RoundedCornerShape(14.dp))
+                    )
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(colorName(red, green, blue), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        Text(if (frozen) "Sample frozen" else "Live color sample", color = SecondaryText, fontSize = 12.sp)
+                    }
+                    TextButton(onClick = { frozen = !frozen }) {
+                        Text(if (frozen) "Resume" else "Freeze", color = Accent)
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("HEX", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(hex, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { copyColor(hex) }) { Text("Copy", color = Accent) }
+                }
+                Text("RGB", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(rgb, color = Color.White, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { copyColor(rgb) }) { Text("Copy", color = Accent) }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        val exists = favorites.any { it.contentEquals(intArrayOf(red, green, blue)) }
+                        if (!exists) favorites.add(intArrayOf(red, green, blue))
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Save favorite color")
+                }
+            }
+        }
+
+        if (favorites.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(18.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("FAVORITE COLORS", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.weight(1f))
+                TextButton(onClick = { favorites.clear() }) { Text("Clear", color = Accent) }
+            }
+            favorites.forEach { item ->
+                val itemHex = "#%02X%02X%02X".format(item[0], item[1], item[2])
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp)
+                        .background(SurfaceDark, RoundedCornerShape(12.dp)).padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(modifier = Modifier.size(34.dp).background(Color(item[0], item[1], item[2]), RoundedCornerShape(8.dp)))
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(itemHex, color = Color.White, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { copyColor(itemHex) }) { Text("Copy", color = Accent) }
+                }
+            }
+        }
+        cameraError?.let {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(it, color = Color(0xFFFFB74D), fontSize = 12.sp)
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Text("Color readings are approximate. Lighting, camera white balance, reflections and screen calibration can change the result.", color = SecondaryText, fontSize = 11.sp, lineHeight = 16.sp)
     }
 }
