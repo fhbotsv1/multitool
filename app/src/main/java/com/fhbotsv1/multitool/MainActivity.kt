@@ -2510,24 +2510,6 @@ private fun CountdownTimerScreen(onBack: () -> Unit) {
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-        OutlinedButton(
-            onClick = {
-                if (vibrator.hasVibrator()) {
-                    vibrator.vibrate(
-                        VibrationEffect.createOneShot(600L, VibrationEffect.DEFAULT_AMPLITUDE)
-                    )
-                }
-            },
-            modifier = Modifier.fillMaxWidth().height(48.dp),
-            enabled = vibrator.hasVibrator()
-        ) {
-            Text(
-                if (vibrator.hasVibrator()) "Test Vibration" else "No vibrator detected",
-                color = Color.White
-            )
-        }
-
         Spacer(modifier = Modifier.height(24.dp))
         Text(
             "When the countdown reaches zero, an on-screen alert will appear. Keep MultiTool open to see the alert.",
