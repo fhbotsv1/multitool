@@ -8,6 +8,12 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.SystemClock
 import android.os.Looper
 import androidx.activity.ComponentActivity
@@ -2299,6 +2305,7 @@ private fun StopwatchScreen(onBack: () -> Unit) {
 
 @Composable
 private fun CountdownTimerScreen(onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var hoursText by remember { mutableStateOf("00") }
     var minutesText by remember { mutableStateOf("05") }
     var secondsText by remember { mutableStateOf("00") }
@@ -2337,6 +2344,38 @@ private fun CountdownTimerScreen(onBack: () -> Unit) {
                 }
                 remainingMillis = left
                 kotlinx.coroutines.delay(100L)
+            }
+        }
+    }
+
+    LaunchedEffect(showFinished) {
+        if (showFinished) {
+            val tone = ToneGenerator(AudioManager.STREAM_ALARM, 85)
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                context.getSystemService(VibratorManager::class.java).defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+
+            try {
+                if (vibrator.hasVibrator()) {
+                    vibrator.vibrate(
+                        VibrationEffect.createWaveform(
+                            longArrayOf(0L, 450L, 250L, 450L, 600L),
+                            0
+                        )
+                    )
+                }
+
+                while (true) {
+                    tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 700)
+                    kotlinx.coroutines.delay(1000L)
+                }
+            } finally {
+                tone.stopTone()
+                tone.release()
+                vibrator.cancel()
             }
         }
     }
