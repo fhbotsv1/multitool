@@ -271,6 +271,7 @@ fun MultiToolApp() {
             when (tool.name) {
                 "Speedometer" -> SpeedometerScreen(onBack = { selectedTool = null })
                 "Compass" -> CompassScreen(onBack = { selectedTool = null })
+                "Magnetic Detector" -> MagneticFieldScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
@@ -824,5 +825,211 @@ private fun CompassScreen(onBack: () -> Unit) {
             fontSize = 11.sp,
             lineHeight = 16.sp
         )
+    }
+}
+
+
+@Composable
+private fun MagneticFieldScreen(onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sensorManager = remember {
+        context.getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
+    }
+    val magneticSensor = remember {
+        sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_MAGNETIC_FIELD)
+    }
+
+    var fieldX by remember { mutableFloatStateOf(0f) }
+    var fieldY by remember { mutableFloatStateOf(0f) }
+    var fieldZ by remember { mutableFloatStateOf(0f) }
+    var fieldStrength by remember { mutableFloatStateOf(0f) }
+    var baseline by remember { mutableStateOf<Float?>(null) }
+    var peakChange by remember { mutableFloatStateOf(0f) }
+    var sensorReady by remember { mutableStateOf(magneticSensor != null) }
+    var sensorAccuracy by remember { mutableStateOf("Waiting for magnetometer…") }
+
+    DisposableEffect(magneticSensor) {
+        if (magneticSensor == null) {
+            sensorReady = false
+            sensorAccuracy = "Magnetometer not available on this device"
+            onDispose { }
+        } else {
+            var smoothedStrength = 0f
+            var hasFirstReading = false
+            val listener = object : android.hardware.SensorEventListener {
+                override fun onSensorChanged(event: android.hardware.SensorEvent) {
+                    val x = event.values[0]
+                    val y = event.values[1]
+                    val z = event.values[2]
+                    val magnitude = kotlin.math.sqrt(x * x + y * y + z * z)
+
+                    if (!hasFirstReading) {
+                        smoothedStrength = magnitude
+                        hasFirstReading = true
+                    } else {
+                        smoothedStrength += (magnitude - smoothedStrength) * 0.22f
+                    }
+
+                    fieldX = x
+                    fieldY = y
+                    fieldZ = z
+                    fieldStrength = smoothedStrength
+
+                    baseline?.let { reference ->
+                        val change = kotlin.math.abs(smoothedStrength - reference)
+                        if (change > peakChange) peakChange = change
+                    }
+                    sensorReady = true
+                }
+
+                override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {
+                    sensorAccuracy = when (accuracy) {
+                        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> "Sensor accuracy: High"
+                        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM -> "Sensor accuracy: Medium"
+                        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_LOW -> "Sensor accuracy: Low • Calibrate phone"
+                        android.hardware.SensorManager.SENSOR_STATUS_UNRELIABLE -> "Sensor unreliable • Move phone in a figure-eight"
+                        else -> "Sensor active"
+                    }
+                }
+            }
+
+            val registered = sensorManager.registerListener(
+                listener,
+                magneticSensor,
+                android.hardware.SensorManager.SENSOR_DELAY_GAME
+            )
+            sensorReady = registered
+            if (!registered) sensorAccuracy = "Could not start magnetometer"
+            onDispose { sensorManager.unregisterListener(listener) }
+        }
+    }
+
+    val deviation = baseline?.let { kotlin.math.abs(fieldStrength - it) } ?: 0f
+    val fieldStatus = when {
+        baseline == null -> "Calibrate to establish baseline"
+        deviation >= 15f -> "Large magnetic field change"
+        deviation >= 5f -> "Noticeable magnetic field change"
+        else -> "Field close to baseline"
+    }
+    val statusColor = when {
+        baseline == null -> Accent
+        deviation >= 15f -> Color(0xFFFF5252)
+        deviation >= 5f -> Color(0xFFFFB74D)
+        else -> Color(0xFF81C784)
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Background).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹  Back", color = Accent, fontSize = 16.sp) }
+            Spacer(modifier = Modifier.weight(1f))
+            Text("MAGNETIC FIELD", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        if (!sensorReady) {
+            Text("Magnetometer unavailable", color = Color(0xFFFFB74D), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(sensorAccuracy, color = SecondaryText, fontSize = 12.sp)
+        } else {
+            Text("LIVE MAGNETIC FIELD STRENGTH", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(String.format("%.1f", fieldStrength), color = Color.White, fontSize = 60.sp, fontWeight = FontWeight.Bold)
+            Text("µT  •  microtesla", color = Accent, fontSize = 16.sp)
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("FIELD COMPONENTS", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        MagneticAxisValue("X", fieldX)
+                        MagneticAxisValue("Y", fieldY)
+                        MagneticAxisValue("Z", fieldZ)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("CHANGE FROM BASELINE", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        if (baseline == null) "Not calibrated" else String.format("%.1f µT", deviation),
+                        color = Color.White,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(fieldStatus, color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Baseline: " + (baseline?.let { String.format("%.1f µT", it) } ?: "Not set"), color = SecondaryText, fontSize = 11.sp)
+                        Text("Peak: " + String.format("%.1f µT", peakChange), color = SecondaryText, fontSize = 11.sp)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Button(
+                onClick = {
+                    baseline = fieldStrength
+                    peakChange = 0f
+                },
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Accent)
+            ) {
+                Text(
+                    if (baseline == null) "Calibrate baseline" else "Recalibrate baseline",
+                    color = Color(0xFF101522),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            OutlinedButton(
+                onClick = {
+                    baseline = null
+                    peakChange = 0f
+                },
+                modifier = Modifier.fillMaxWidth().height(46.dp)
+            ) {
+                Text("Reset calibration", color = Color.White)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(sensorAccuracy, color = SecondaryText, fontSize = 11.sp)
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            "Move the phone near a magnet or magnetic object to observe changes. Ferromagnetic metals usually affect readings more strongly. This is not a radiation or general-purpose metal detector.",
+            color = SecondaryText,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+        )
+    }
+}
+
+@Composable
+private fun MagneticAxisValue(label: String, value: Float) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(String.format("%+.1f", value), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        Text("µT", color = SecondaryText, fontSize = 10.sp)
     }
 }
