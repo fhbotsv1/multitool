@@ -272,6 +272,7 @@ fun MultiToolApp() {
                 "Speedometer" -> SpeedometerScreen(onBack = { selectedTool = null })
                 "Compass" -> CompassScreen(onBack = { selectedTool = null })
                 "Magnetic Detector" -> MagneticFieldScreen(onBack = { selectedTool = null })
+                "Metal Detector" -> MetalDetectorScreen(onBack = { selectedTool = null })
                 "Light Meter" -> LightMeterScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
@@ -1035,6 +1036,216 @@ private fun MagneticAxisValue(label: String, value: Float) {
     }
 }
 
+
+
+@Composable
+private fun MetalDetectorScreen(onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sensorManager = remember {
+        context.getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
+    }
+    val magneticSensor = remember {
+        sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_MAGNETIC_FIELD)
+    }
+
+    var fieldStrength by remember { mutableFloatStateOf(0f) }
+    var baseline by remember { mutableStateOf<Float?>(null) }
+    var peakDeviation by remember { mutableFloatStateOf(0f) }
+    var sensorAvailable by remember { mutableStateOf(magneticSensor != null) }
+    var hasReading by remember { mutableStateOf(false) }
+    var sensorMessage by remember { mutableStateOf("Waiting for magnetometer…") }
+
+    DisposableEffect(magneticSensor) {
+        if (magneticSensor == null) {
+            sensorAvailable = false
+            sensorMessage = "This phone does not have a magnetometer."
+            onDispose { }
+        } else {
+            var smoothed = 0f
+            var first = true
+            val listener = object : android.hardware.SensorEventListener {
+                override fun onSensorChanged(event: android.hardware.SensorEvent) {
+                    val x = event.values[0]
+                    val y = event.values[1]
+                    val z = event.values[2]
+                    val magnitude = kotlin.math.sqrt(x * x + y * y + z * z)
+                    if (first) {
+                        smoothed = magnitude
+                        first = false
+                    } else {
+                        smoothed += (magnitude - smoothed) * 0.18f
+                    }
+                    fieldStrength = smoothed
+                    hasReading = true
+                    baseline?.let {
+                        val deviation = kotlin.math.abs(smoothed - it)
+                        if (deviation > peakDeviation) peakDeviation = deviation
+                    }
+                }
+
+                override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {
+                    sensorMessage = when (accuracy) {
+                        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> "Magnetometer accuracy: High"
+                        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM -> "Magnetometer accuracy: Medium"
+                        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_LOW -> "Low accuracy • move phone in a figure-eight"
+                        android.hardware.SensorManager.SENSOR_STATUS_UNRELIABLE -> "Sensor unreliable • recalibrate phone"
+                        else -> "Magnetometer active"
+                    }
+                }
+            }
+            val registered = sensorManager.registerListener(
+                listener,
+                magneticSensor,
+                android.hardware.SensorManager.SENSOR_DELAY_GAME
+            )
+            sensorAvailable = registered
+            if (!registered) sensorMessage = "Could not start magnetometer."
+            onDispose { sensorManager.unregisterListener(listener) }
+        }
+    }
+
+    val deviation = baseline?.let { kotlin.math.abs(fieldStrength - it) } ?: 0f
+    val detectionLevel = when {
+        baseline == null -> "Calibrate first"
+        deviation >= 25f -> "Strong magnetic disturbance"
+        deviation >= 12f -> "Metal / magnetic object nearby"
+        deviation >= 5f -> "Weak magnetic change"
+        else -> "No significant change"
+    }
+    val levelColor = when {
+        baseline == null -> Accent
+        deviation >= 25f -> Color(0xFFFF5252)
+        deviation >= 12f -> Color(0xFFFF8A50)
+        deviation >= 5f -> Color(0xFFFFD54F)
+        else -> Color(0xFF81C784)
+    }
+    val levelProgress = (deviation / 50f).coerceIn(0f, 1f)
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Background).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹  Back", color = Accent, fontSize = 16.sp) }
+            Spacer(modifier = Modifier.weight(1f))
+            Text("METAL DETECTOR", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        if (!sensorAvailable) {
+            Text("Magnetometer unavailable", color = Color(0xFFFFB74D), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(sensorMessage, color = SecondaryText, fontSize = 12.sp)
+        } else {
+            Text("MAGNETIC FIELD", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                if (hasReading) String.format("%.1f", fieldStrength) else "—",
+                color = Color.White,
+                fontSize = 48.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text("µT • microtesla", color = Accent, fontSize = 15.sp)
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+                    Text("DETECTION RESPONSE", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(14.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(Color(0xFF303B4D))
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth(levelProgress).fillMaxHeight()
+                                .background(levelColor, RoundedCornerShape(50))
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        if (hasReading) detectionLevel else "Waiting for sensor…",
+                        color = levelColor,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        if (baseline == null) "Set a baseline with the phone away from magnetic objects."
+                        else String.format("Change from baseline: %.1f µT", deviation),
+                        color = SecondaryText,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("READING HISTORY", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column {
+                            Text("Baseline", color = SecondaryText, fontSize = 11.sp)
+                            Text(baseline?.let { String.format("%.1f µT", it) } ?: "Not set", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("Peak change", color = SecondaryText, fontSize = 11.sp)
+                            Text(String.format("%.1f µT", peakDeviation), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = {
+                    baseline = fieldStrength
+                    peakDeviation = 0f
+                },
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                enabled = hasReading,
+                colors = ButtonDefaults.buttonColors(containerColor = Accent)
+            ) {
+                Text(
+                    if (baseline == null) "Calibrate detector" else "Recalibrate",
+                    color = Color(0xFF101522),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            OutlinedButton(
+                onClick = {
+                    baseline = null
+                    peakDeviation = 0f
+                },
+                modifier = Modifier.fillMaxWidth().height(46.dp)
+            ) {
+                Text("Reset baseline", color = Color.White)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(sensorMessage, color = SecondaryText, fontSize = 11.sp)
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            "Calibrate away from metal, then slowly sweep the phone near the object. This detects magnetic disturbances, especially from ferromagnetic metals such as iron and steel. It cannot reliably detect non-magnetic metals such as aluminium, copper or gold. Remove magnetic phone cases and accessories for best results.",
+            color = SecondaryText,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+        )
+    }
+}
 
 @Composable
 private fun LightMeterScreen(onBack: () -> Unit) {
