@@ -51,6 +51,7 @@ import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 
 private val Background = Color(0xFF101522)
 private val SurfaceDark = Color(0xFF1B2433)
@@ -304,6 +305,7 @@ fun MultiToolApp() {
                 "Screen Tester" -> ScreenTesterScreen(onBack = { selectedTool = null })
                 "Ruler" -> ScreenRulerScreen(onBack = { selectedTool = null })
                 "Protractor" -> ProtractorScreen(onBack = { selectedTool = null })
+                "Bubble Level" -> BubbleLevelScreen(onBack = { selectedTool = null })
                 "AR Measure" -> ARMeasureScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
@@ -4495,5 +4497,151 @@ private class ARMeasureRenderer(
             android.opengl.GLES20.glAttachShader(it, fs)
             android.opengl.GLES20.glLinkProgram(it)
         }
+    }
+}
+
+
+@Composable
+fun BubbleLevelScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val sensorManager = remember {
+        context.getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
+    }
+    val accelerometer = remember {
+        sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
+    }
+
+    var rawX by remember { mutableFloatStateOf(0f) }
+    var rawY by remember { mutableFloatStateOf(0f) }
+    var calibratedX by remember { mutableFloatStateOf(0f) }
+    var calibratedY by remember { mutableFloatStateOf(0f) }
+    var sensorReady by remember { mutableStateOf(false) }
+    var sensorAccuracy by remember { mutableIntStateOf(android.hardware.SensorManager.SENSOR_STATUS_UNRELIABLE) }
+
+    DisposableEffect(sensorManager, accelerometer) {
+        if (accelerometer != null) {
+            val listener = object : android.hardware.SensorEventListener {
+                override fun onSensorChanged(event: android.hardware.SensorEvent) {
+                    val values = event.values
+                    rawX = Math.toDegrees(kotlin.math.atan2(values[0].toDouble(), values[2].toDouble())).toFloat()
+                    rawY = Math.toDegrees(kotlin.math.atan2(values[1].toDouble(), values[2].toDouble())).toFloat()
+                    sensorReady = true
+                }
+
+                override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {
+                    sensorAccuracy = accuracy
+                }
+            }
+            sensorManager.registerListener(listener, accelerometer, android.hardware.SensorManager.SENSOR_DELAY_GAME)
+            onDispose { sensorManager.unregisterListener(listener) }
+        } else {
+            onDispose { }
+        }
+    }
+
+    val xAngle = rawX - calibratedX
+    val yAngle = rawY - calibratedY
+    val isLevel = kotlin.math.abs(xAngle) < 1.0f && kotlin.math.abs(yAngle) < 1.0f
+    val accuracyText = when (sensorAccuracy) {
+        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> "High"
+        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM -> "Medium"
+        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_LOW -> "Low"
+        else -> "Uncalibrated"
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Background)
+            .verticalScroll(rememberScrollState()).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("‹", color = Color.White, fontSize = 32.sp,
+                modifier = Modifier.clickable { onBack() }.padding(end = 14.dp))
+            Column {
+                Text("Bubble Level", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                Text("Check whether a surface is level", color = SecondaryText, fontSize = 13.sp)
+            }
+        }
+
+        Spacer(Modifier.height(22.dp))
+
+        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    if (!sensorReady) "Waiting for accelerometer…" else if (isLevel) "LEVEL" else "NOT LEVEL",
+                    color = if (isLevel && sensorReady) Color(0xFF66BB6A) else if (sensorReady) Color(0xFFFFB74D) else SecondaryText,
+                    fontSize = 18.sp, fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(10.dp))
+                Canvas(modifier = Modifier.fillMaxWidth().aspectRatio(1f)) {
+                    val radius = size.minDimension * 0.43f
+                    val center = Offset(size.width / 2f, size.height / 2f)
+                    drawCircle(Color(0xFF263B57), radius, center)
+                    drawCircle(Color(0xFF7892AE), radius, center,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
+                    drawCircle(Color(0xFF9AA9BD), radius * 0.55f, center,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
+                    drawLine(Color(0xFF9AA9BD), Offset(center.x - radius, center.y),
+                        Offset(center.x + radius, center.y), 1.dp.toPx())
+                    drawLine(Color(0xFF9AA9BD), Offset(center.x, center.y - radius),
+                        Offset(center.x, center.y + radius), 1.dp.toPx())
+                    val bubbleX = (xAngle / 15f).coerceIn(-1f, 1f) * radius * 0.72f
+                    val bubbleY = (yAngle / 15f).coerceIn(-1f, 1f) * radius * 0.72f
+                    val bubbleColor = if (isLevel) Color(0xFF66BB6A) else Accent
+                    drawCircle(bubbleColor.copy(alpha = 0.25f), radius * 0.16f, center + Offset(bubbleX, bubbleY))
+                    drawCircle(bubbleColor, radius * 0.105f, center + Offset(bubbleX, bubbleY))
+                }
+                Text("Place the phone flat on the surface", color = SecondaryText, fontSize = 13.sp)
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Card(modifier = Modifier.weight(1f), colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(16.dp)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("X AXIS", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(String.format(java.util.Locale.US, "%.1f", xAngle) + "°",
+                        color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Card(modifier = Modifier.weight(1f), colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(16.dp)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("Y AXIS", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(String.format(java.util.Locale.US, "%.1f", yAngle) + "°",
+                        color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Button(onClick = {
+            calibratedX = rawX
+            calibratedY = rawY
+        }, modifier = Modifier.fillMaxWidth().height(50.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Accent),
+            shape = RoundedCornerShape(14.dp)) {
+            Text("CALIBRATE ZERO", color = Color(0xFF101522), fontWeight = FontWeight.Bold)
+        }
+        TextButton(onClick = {
+            calibratedX = 0f
+            calibratedY = 0f
+        }) {
+            Text("Reset calibration", color = SecondaryText)
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text(
+            if (accelerometer == null) "This phone does not have an accelerometer."
+            else "Sensor accuracy: " + accuracyText,
+            color = SecondaryText, fontSize = 12.sp
+        )
+        Text(
+            "For best results, place the phone flat and still. Calibration sets the current position as zero; it does not correct the phone's physical sensor bias.",
+            color = SecondaryText, fontSize = 12.sp
+        )
     }
 }
