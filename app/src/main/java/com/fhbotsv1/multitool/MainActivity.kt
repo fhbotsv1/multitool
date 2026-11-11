@@ -4298,10 +4298,16 @@ private fun ARMeasureScreen(onBack: () -> Unit) {
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            if (hasCameraPermission) "START AR" else "GRANT CAMERA ACCESS",
+                            text = if (hasCameraPermission) "START AR" else "GRANT CAMERA ACCESS",
+                            modifier = Modifier.align(Alignment.Center),
                             color = Color(0xFF101522),
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold
+                            style = androidx.compose.ui.text.TextStyle(
+                                fontSize = 16.sp,
+                                lineHeight = 22.sp,
+                                fontWeight = FontWeight.Bold,
+                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                            ),
+                            maxLines = 1
                         )
                     }
                 }
