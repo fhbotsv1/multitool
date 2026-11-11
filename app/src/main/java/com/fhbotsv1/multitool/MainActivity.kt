@@ -302,6 +302,7 @@ fun MultiToolApp() {
                 "Color Detector" -> ColorDetectorScreen(onBack = { selectedTool = null })
                 "Screen Tester" -> ScreenTesterScreen(onBack = { selectedTool = null })
                 "Ruler" -> ScreenRulerScreen(onBack = { selectedTool = null })
+                "Protractor" -> ProtractorScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
@@ -3821,5 +3822,112 @@ private fun ScreenRulerScreen(onBack: () -> Unit) {
         }
         Spacer(Modifier.height(12.dp))
         Text("Accuracy depends on your phone's reported screen density. Calibrate before measuring; this is not a precision instrument.", color = SecondaryText, fontSize = 11.sp)
+    }
+}
+
+
+@Composable
+private fun ProtractorScreen(onBack: () -> Unit) {
+    var angle by remember { mutableFloatStateOf(45f) }
+
+    Column(
+        Modifier.fillMaxSize().background(Background).verticalScroll(rememberScrollState()).padding(16.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹  Back", color = Accent) }
+            Spacer(Modifier.weight(1f))
+            Text("PROTRACTOR", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("Angle protractor", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text("Set the indicator to the angle you want to measure.", color = SecondaryText, fontSize = 12.sp)
+        Spacer(Modifier.height(16.dp))
+
+        Card(
+            Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F2E9)),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Canvas(Modifier.fillMaxWidth().height(230.dp).padding(horizontal = 8.dp, vertical = 8.dp)) {
+                val radius = (size.width / 2f - 14.dp.toPx()).coerceAtMost(size.height - 18.dp.toPx())
+                val center = Offset(size.width / 2f, size.height - 12.dp.toPx())
+                val arcTop = center.y - radius
+                drawArc(
+                    color = Color(0xFF263238),
+                    startAngle = 180f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(center.x - radius, arcTop),
+                    size = androidx.compose.ui.geometry.Size(radius * 2f, radius * 2f),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
+                )
+                drawLine(Color(0xFF263238), Offset(center.x - radius, center.y), Offset(center.x + radius, center.y), 2.dp.toPx())
+                for (degree in 0..180) {
+                    val radians = Math.toRadians((180 - degree).toDouble())
+                    val outerX = center.x + radius * kotlin.math.cos(radians).toFloat()
+                    val outerY = center.y - radius * kotlin.math.sin(radians).toFloat()
+                    val tickLength = when {
+                        degree % 10 == 0 -> 17.dp.toPx()
+                        degree % 5 == 0 -> 11.dp.toPx()
+                        else -> 6.dp.toPx()
+                    }
+                    val innerX = center.x + (radius - tickLength) * kotlin.math.cos(radians).toFloat()
+                    val innerY = center.y - (radius - tickLength) * kotlin.math.sin(radians).toFloat()
+                    drawLine(Color(0xFF263238), Offset(innerX, innerY), Offset(outerX, outerY), if (degree % 10 == 0) 1.5.dp.toPx() else 0.8.dp.toPx())
+                    if (degree % 10 == 0) {
+                        val labelRadius = radius - 31.dp.toPx()
+                        val lx = center.x + labelRadius * kotlin.math.cos(radians).toFloat()
+                        val ly = center.y - labelRadius * kotlin.math.sin(radians).toFloat()
+                        drawContext.canvas.nativeCanvas.drawText(
+                            degree.toString(),
+                            lx,
+                            ly + 4.dp.toPx(),
+                            android.graphics.Paint().apply {
+                                color = android.graphics.Color.BLACK
+                                textSize = 10.dp.toPx()
+                                textAlign = android.graphics.Paint.Align.CENTER
+                                isAntiAlias = true
+                            }
+                        )
+                    }
+                }
+                val pointerRadians = Math.toRadians((180f - angle).toDouble())
+                val pointerEnd = Offset(
+                    center.x + (radius - 22.dp.toPx()) * kotlin.math.cos(pointerRadians).toFloat(),
+                    center.y - (radius - 22.dp.toPx()) * kotlin.math.sin(pointerRadians).toFloat()
+                )
+                drawLine(Color(0xFFD32F2F), center, pointerEnd, 3.dp.toPx())
+                drawCircle(Color(0xFFD32F2F), radius = 5.dp.toPx(), center = center)
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = SurfaceDark), shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.fillMaxWidth().padding(18.dp)) {
+                Text("MEASURED ANGLE", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(angle.toInt().toString(), color = Color.White, fontSize = 48.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.width(5.dp))
+                    Text("°", color = Accent, fontSize = 30.sp)
+                }
+                Slider(value = angle, onValueChange = { angle = it }, valueRange = 0f..180f, steps = 179)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("0°", color = SecondaryText, fontSize = 11.sp)
+                    Text("90°", color = SecondaryText, fontSize = 11.sp)
+                    Text("180°", color = SecondaryText, fontSize = 11.sp)
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = { angle = 90f }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Set to 90°", color = Color.White)
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "Place the protractor baseline along one side of the angle, then adjust the red indicator to align with the other side. This is an on-screen guide; it does not use the camera to detect real-world angles.",
+            color = SecondaryText,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+        )
     }
 }
