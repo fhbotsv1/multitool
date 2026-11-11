@@ -264,9 +264,10 @@ fun MultiToolApp() {
         }
 
         selectedTool?.let { tool ->
-            if (tool.name == "Speedometer") {
-                SpeedometerScreen(onBack = { selectedTool = null })
-            } else AlertDialog(
+            when (tool.name) {
+                "Speedometer" -> SpeedometerScreen(onBack = { selectedTool = null })
+                "Compass" -> CompassScreen(onBack = { selectedTool = null })
+                else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
                 title = {
@@ -289,6 +290,7 @@ fun MultiToolApp() {
                     }
                 }
             )
+            }
         }
     }
 }
@@ -508,7 +510,7 @@ private fun SpeedometerScreen(onBack: () -> Unit) {
         if (gpsAccuracy > 0f) Text("Accuracy ±${gpsAccuracy.toInt()} m", color = SecondaryText, fontSize = 11.sp)
         Spacer(modifier = Modifier.height(24.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            SpeedStatCard("MAX SPEED", "${maxSpeed}.toInt()} km/h", Modifier.weight(1f))
+            SpeedStatCard("MAX SPEED", "${maxSpeed.toInt()} km/h", Modifier.weight(1f))
             SpeedStatCard("TRIP DISTANCE", String.format("%.2f km", tripDistance / 1000f), Modifier.weight(1f))
         }
         Spacer(modifier = Modifier.height(28.dp))
@@ -555,5 +557,170 @@ private fun SpeedStatCard(title: String, value: String, modifier: Modifier = Mod
             Spacer(modifier = Modifier.height(8.dp))
             Text(value, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         }
+    }
+}
+
+
+@Composable
+private fun CompassScreen(onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sensorManager = remember {
+        context.getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
+    }
+    val rotationSensor = remember {
+        sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_ROTATION_VECTOR)
+    }
+    var azimuth by remember { mutableFloatStateOf(0f) }
+    var sensorReady by remember { mutableStateOf(rotationSensor != null) }
+
+    DisposableEffect(rotationSensor) {
+        if (rotationSensor == null) {
+            sensorReady = false
+            onDispose { }
+        } else {
+            val listener = object : android.hardware.SensorEventListener {
+                override fun onSensorChanged(event: android.hardware.SensorEvent) {
+                    val matrix = FloatArray(9)
+                    val orientation = FloatArray(3)
+                    android.hardware.SensorManager.getRotationMatrixFromVector(matrix, event.values)
+                    android.hardware.SensorManager.getOrientation(matrix, orientation)
+                    val degrees = Math.toDegrees(orientation[0].toDouble()).toFloat()
+                    azimuth = (degrees + 360f) % 360f
+                    sensorReady = true
+                }
+
+                override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {
+                    if (accuracy == android.hardware.SensorManager.SENSOR_STATUS_UNRELIABLE) {
+                        sensorReady = false
+                    }
+                }
+            }
+            val registered = sensorManager.registerListener(
+                listener,
+                rotationSensor,
+                android.hardware.SensorManager.SENSOR_DELAY_UI
+            )
+            sensorReady = registered
+            onDispose { sensorManager.unregisterListener(listener) }
+        }
+    }
+
+    val direction = when {
+        azimuth >= 337.5f || azimuth < 22.5f -> "N"
+        azimuth < 67.5f -> "NE"
+        azimuth < 112.5f -> "E"
+        azimuth < 157.5f -> "SE"
+        azimuth < 202.5f -> "S"
+        azimuth < 247.5f -> "SW"
+        azimuth < 292.5f -> "W"
+        else -> "NW"
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Background).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹  Back", color = Accent, fontSize = 16.sp) }
+            Spacer(modifier = Modifier.weight(1f))
+            Text("DIGITAL COMPASS", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.height(18.dp))
+        Text(
+            if (sensorReady) "Rotate your phone to find direction" else "Orientation sensor unavailable",
+            color = if (sensorReady) SecondaryText else Color(0xFFFFB74D),
+            fontSize = 12.sp
+        )
+        Spacer(modifier = Modifier.height(18.dp))
+        Box(
+            modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+            contentAlignment = Alignment.Center
+        ) {
+            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+                val center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
+                val radius = size.minDimension * 0.46f
+                drawCircle(color = Color(0xFF263B57), radius = radius, center = center, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 5.dp.toPx()))
+                drawCircle(color = Color(0xFF1B2B40), radius = radius * 0.82f, center = center)
+                for (i in 0 until 72) {
+                    val angle = Math.toRadians(i * 5.0)
+                    val outer = radius * 0.94f
+                    val inner = if (i % 6 == 0) radius * 0.78f else radius * 0.86f
+                    val x1 = center.x + kotlin.math.sin(angle).toFloat() * inner
+                    val y1 = center.y - kotlin.math.cos(angle).toFloat() * inner
+                    val x2 = center.x + kotlin.math.sin(angle).toFloat() * outer
+                    val y2 = center.y - kotlin.math.cos(angle).toFloat() * outer
+                    drawLine(
+                        color = if (i % 18 == 0) Color.White else SecondaryText,
+                        start = androidx.compose.ui.geometry.Offset(x1, y1),
+                        end = androidx.compose.ui.geometry.Offset(x2, y2),
+                        strokeWidth = if (i % 6 == 0) 2.5.dp.toPx() else 1.dp.toPx()
+                    )
+                }
+                rotate(degrees = -azimuth, pivot = center) {
+                    val needle = androidx.compose.ui.graphics.Path().apply {
+                        moveTo(center.x, center.y - radius * 0.66f)
+                        lineTo(center.x - radius * 0.12f, center.y + radius * 0.12f)
+                        lineTo(center.x, center.y + radius * 0.04f)
+                        lineTo(center.x + radius * 0.12f, center.y + radius * 0.12f)
+                        close()
+                    }
+                    drawPath(needle, color = Color(0xFFFF5252))
+                    drawCircle(color = Color.White, radius = radius * 0.035f, center = center)
+                }
+            }
+            Column(
+                modifier = Modifier.fillMaxSize().padding(vertical = 20.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("N", color = Color(0xFFFF5252), fontSize = 22.sp, fontWeight = FontWeight.Black)
+                Text("S", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("W", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("E", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            if (sensorReady) direction else "--",
+            color = Color.White,
+            fontSize = 42.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            if (sensorReady) "${azimuth.toInt()}°" else "---°",
+            color = Accent,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(modifier = Modifier.height(20.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Text("COMPASS HEADING", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    if (sensorReady) "${azimuth.toInt()}°  •  $direction" else "Sensor not available",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            "Keep the phone flat and away from magnets or metal. Calibrate by moving it in a figure-eight if readings are unstable.",
+            color = SecondaryText,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+        )
     }
 }
