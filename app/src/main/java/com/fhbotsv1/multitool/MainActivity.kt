@@ -3587,12 +3587,9 @@ private fun ScreenTesterScreen(onBack: () -> Unit) {
     val activeTouches = remember { mutableStateListOf<Offset>() }
     val metrics = remember {
         val dm = context.resources.displayMetrics
-        val refresh = if (android.os.Build.VERSION.SDK_INT >= 30) {
-            context.display?.refreshRate ?: dm.refreshRate
-        } else {
-            @Suppress("DEPRECATION")
-            (context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay.refreshRate
-        }
+        @Suppress("DEPRECATION")
+        val refresh = (context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager)
+            .defaultDisplay.refreshRate
         Triple(dm.widthPixels, dm.heightPixels, refresh)
     }
 
