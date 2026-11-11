@@ -26,6 +26,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.layout.*
@@ -297,6 +298,7 @@ fun MultiToolApp() {
                 "QR Scanner" -> QrScannerScreen(onBack = { selectedTool = null })
                 "Color Detector" -> ColorDetectorScreen(onBack = { selectedTool = null })
                 "Screen Tester" -> ScreenTesterScreen(onBack = { selectedTool = null })
+                "Ruler" -> ScreenRulerScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
@@ -3712,5 +3714,102 @@ private fun ScreenTesterScreen(onBack: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+
+@Composable
+private fun ScreenRulerScreen(onBack: () -> Unit) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    var unit by remember { mutableStateOf("cm") }
+    var calibration by remember { mutableFloatStateOf(1f) }
+    val scrollState = rememberScrollState()
+    val pxPerMm = with(density) { 160f / 25.4f * density.density } * calibration
+
+    Column(Modifier.fillMaxSize().background(Background).padding(16.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹  Back", color = Accent) }
+            Spacer(Modifier.weight(1f))
+            Text("SCREEN RULER", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("On-screen ruler", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text("Place a small object against the scale. Scroll horizontally to see more.", color = SecondaryText, fontSize = 12.sp)
+        Spacer(Modifier.height(18.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = unit == "cm", onClick = { unit = "cm" }, label = { Text("Centimetres") })
+            FilterChip(selected = unit == "inch", onClick = { unit = "inch" }, label = { Text("Inches") })
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            if (unit == "cm") "Millimetre ticks · numbered every centimetre" else "Millimetre ticks · numbered every inch",
+            color = SecondaryText,
+            fontSize = 12.sp
+        )
+        Spacer(Modifier.height(10.dp))
+
+        Box(
+            Modifier.fillMaxWidth().height(190.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFF5F2E9))
+                .horizontalScroll(scrollState)
+        ) {
+            Canvas(Modifier.width(1200.dp).fillMaxHeight()) {
+                val step = pxPerMm
+                val rulerHeight = size.height
+                val totalTicks = (size.width / step).toInt()
+                val paint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.BLACK
+                    textSize = 12f * density.density
+                    isAntiAlias = true
+                    textAlign = android.graphics.Paint.Align.CENTER
+                }
+                for (mm in 0..totalTicks) {
+                    val x = mm * step
+                    val isMajor = if (unit == "cm") mm % 10 == 0 else mm % 25.4f < 0.51f || 25.4f - (mm % 25.4f) < 0.51f
+                    val isMid = mm % 5 == 0
+                    val tickHeight = when {
+                        isMajor -> rulerHeight * 0.62f
+                        isMid -> rulerHeight * 0.38f
+                        else -> rulerHeight * 0.20f
+                    }
+                    drawLine(
+                        color = Color.Black,
+                        start = Offset(x, 0f),
+                        end = Offset(x, tickHeight),
+                        strokeWidth = if (isMajor) 2.dp.toPx() else 1.dp.toPx()
+                    )
+                    if (isMajor) {
+                        val label = if (unit == "cm") (mm / 10).toString() else (mm / 25.4f).toInt().toString()
+                        drawContext.canvas.nativeCanvas.drawText(label, x + 1.dp.toPx(), rulerHeight * 0.88f, paint)
+                    }
+                }
+                drawLine(
+                    color = Color.Black,
+                    start = Offset(0f, rulerHeight * 0.64f),
+                    end = Offset(size.width, rulerHeight * 0.64f),
+                    strokeWidth = 1.dp.toPx()
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("← Scroll ruler →", color = SecondaryText, fontSize = 11.sp, modifier = Modifier.align(Alignment.CenterHorizontally))
+        Spacer(Modifier.height(20.dp))
+
+        Card(colors = CardDefaults.cardColors(containerColor = SurfaceDark), shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                Text("CALIBRATION", color = Accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(7.dp))
+                Text("Adjust the scale to match a known physical measurement.", color = Color.White, fontSize = 13.sp)
+                Spacer(Modifier.height(8.dp))
+                Text("Calibration: " + String.format(java.util.Locale.US, "%.0f", calibration * 100f) + "%", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Slider(value = calibration, onValueChange = { calibration = it }, valueRange = 0.75f..1.25f)
+                Text("Tip: Use a bank card's standard 85.6 mm width as a reference. Align its edge with zero and adjust until its other edge matches 85.6 mm.", color = SecondaryText, fontSize = 12.sp)
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = { calibration = 1f }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Reset calibration", color = Color.White)
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text("Accuracy depends on your phone's reported screen density. Calibrate before measuring; this is not a precision instrument.", color = SecondaryText, fontSize = 11.sp)
     }
 }
