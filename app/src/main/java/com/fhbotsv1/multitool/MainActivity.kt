@@ -3828,7 +3828,77 @@ private fun ScreenRulerScreen(onBack: () -> Unit) {
 
 @Composable
 private fun ProtractorScreen(onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val activity = context as Activity
+    val lifecycleOwner = context as androidx.lifecycle.LifecycleOwner
     var angle by remember { mutableFloatStateOf(45f) }
+    var orientation by remember { mutableStateOf("Portrait") }
+    var cameraMode by remember { mutableStateOf(false) }
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var previewView by remember { mutableStateOf<androidx.camera.view.PreviewView?>(null) }
+    var cameraError by remember { mutableStateOf<String?>(null) }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasCameraPermission = granted
+        if (!granted) cameraError = "Camera permission was not granted."
+    }
+
+    DisposableEffect(activity) {
+        val previousOrientation = activity.requestedOrientation
+        onDispose { activity.requestedOrientation = previousOrientation }
+    }
+
+    LaunchedEffect(orientation) {
+        activity.requestedOrientation = if (orientation == "Landscape") {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        } else {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+
+    LaunchedEffect(previewView, cameraMode, hasCameraPermission) {
+        val view = previewView
+        if (cameraMode && hasCameraPermission && view != null) {
+            try {
+                val providerFuture = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context)
+                providerFuture.addListener({
+                    try {
+                        val provider = providerFuture.get()
+                        val preview = androidx.camera.core.Preview.Builder().build().also {
+                            it.surfaceProvider = view.surfaceProvider
+                        }
+                        provider.unbindAll()
+                        provider.bindToLifecycle(
+                            lifecycleOwner,
+                            androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA,
+                            preview
+                        )
+                        cameraError = null
+                    } catch (exception: Exception) {
+                        cameraError = exception.localizedMessage ?: "Unable to start the camera preview."
+                    }
+                }, ContextCompat.getMainExecutor(context))
+            } catch (exception: Exception) {
+                cameraError = exception.localizedMessage ?: "Camera is unavailable."
+            }
+        }
+    }
+
+    DisposableEffect(previewView, cameraMode, hasCameraPermission) {
+        onDispose {
+            if (cameraMode && hasCameraPermission) {
+                runCatching {
+                    androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context).get().unbindAll()
+                }
+            }
+        }
+    }
 
     Column(
         Modifier.fillMaxSize().background(Background).verticalScroll(rememberScrollState()).padding(16.dp)
@@ -3839,68 +3909,199 @@ private fun ProtractorScreen(onBack: () -> Unit) {
             Text("PROTRACTOR", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         }
         Text("Angle protractor", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        Text("Set the indicator to the angle you want to measure.", color = SecondaryText, fontSize = 12.sp)
-        Spacer(Modifier.height(16.dp))
+        Text("Choose the screen orientation and measurement view.", color = SecondaryText, fontSize = 12.sp)
+        Spacer(Modifier.height(12.dp))
 
-        Card(
-            Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F2E9)),
-            shape = RoundedCornerShape(16.dp)
-        ) {
-            Canvas(Modifier.fillMaxWidth().height(230.dp).padding(horizontal = 8.dp, vertical = 8.dp)) {
-                val radius = (size.width / 2f - 14.dp.toPx()).coerceAtMost(size.height - 18.dp.toPx())
-                val center = Offset(size.width / 2f, size.height - 12.dp.toPx())
-                val arcTop = center.y - radius
-                drawArc(
-                    color = Color(0xFF263238),
-                    startAngle = 180f,
-                    sweepAngle = 180f,
-                    useCenter = false,
-                    topLeft = Offset(center.x - radius, arcTop),
-                    size = androidx.compose.ui.geometry.Size(radius * 2f, radius * 2f),
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
-                )
-                drawLine(Color(0xFF263238), Offset(center.x - radius, center.y), Offset(center.x + radius, center.y), 2.dp.toPx())
-                for (degree in 0..180) {
-                    val radians = Math.toRadians((180 - degree).toDouble())
-                    val outerX = center.x + radius * kotlin.math.cos(radians).toFloat()
-                    val outerY = center.y - radius * kotlin.math.sin(radians).toFloat()
-                    val tickLength = when {
-                        degree % 10 == 0 -> 17.dp.toPx()
-                        degree % 5 == 0 -> 11.dp.toPx()
-                        else -> 6.dp.toPx()
+        Text("SCREEN ORIENTATION", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = orientation == "Portrait",
+                onClick = { orientation = "Portrait" },
+                label = { Text("Portrait") }
+            )
+            FilterChip(
+                selected = orientation == "Landscape",
+                onClick = { orientation = "Landscape" },
+                label = { Text("Landscape") }
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("MEASUREMENT VIEW", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            FilterChip(
+                selected = !cameraMode,
+                onClick = { cameraMode = false },
+                label = { Text("Scale") }
+            )
+            Spacer(Modifier.width(6.dp))
+            FilterChip(
+                selected = cameraMode,
+                onClick = {
+                    cameraMode = true
+                    if (!hasCameraPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
+                },
+                label = { Text("Live camera") }
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+
+        if (cameraMode && !hasCameraPermission) {
+            Card(
+                Modifier.fillMaxWidth().height(230.dp),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    Modifier.fillMaxSize().padding(20.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Camera access is needed to show the live view.", color = Color.White)
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
+                        Text("Grant camera access")
                     }
-                    val innerX = center.x + (radius - tickLength) * kotlin.math.cos(radians).toFloat()
-                    val innerY = center.y - (radius - tickLength) * kotlin.math.sin(radians).toFloat()
-                    drawLine(Color(0xFF263238), Offset(innerX, innerY), Offset(outerX, outerY), if (degree % 10 == 0) 1.5.dp.toPx() else 0.8.dp.toPx())
-                    if (degree % 10 == 0) {
-                        val labelRadius = radius - 31.dp.toPx()
-                        val lx = center.x + labelRadius * kotlin.math.cos(radians).toFloat()
-                        val ly = center.y - labelRadius * kotlin.math.sin(radians).toFloat()
-                        drawContext.canvas.nativeCanvas.drawText(
-                            degree.toString(),
-                            lx,
-                            ly + 4.dp.toPx(),
-                            android.graphics.Paint().apply {
-                                color = android.graphics.Color.BLACK
+                }
+            }
+        } else if (cameraMode) {
+            Box(
+                Modifier.fillMaxWidth()
+                    .height(if (orientation == "Landscape") 250.dp else 320.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.Black)
+            ) {
+                AndroidView(
+                    factory = { viewContext ->
+                        androidx.camera.view.PreviewView(viewContext).apply {
+                            scaleType = androidx.camera.view.PreviewView.ScaleType.FILL_CENTER
+                            implementationMode = androidx.camera.view.PreviewView.ImplementationMode.COMPATIBLE
+                            previewView = this
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+                Canvas(Modifier.fillMaxSize()) {
+                    val radius = (size.width * 0.46f).coerceAtMost(size.height * 0.82f)
+                    val center = Offset(size.width / 2f, size.height - 18.dp.toPx())
+                    val protractorTop = center.y - radius
+                    drawArc(
+                        color = Color.White.copy(alpha = 0.92f),
+                        startAngle = 180f,
+                        sweepAngle = 180f,
+                        useCenter = false,
+                        topLeft = Offset(center.x - radius, protractorTop),
+                        size = androidx.compose.ui.geometry.Size(radius * 2f, radius * 2f),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
+                    )
+                    drawLine(Color.White.copy(alpha = 0.92f), Offset(center.x - radius, center.y), Offset(center.x + radius, center.y), 2.dp.toPx())
+                    for (degree in 0..180) {
+                        val radians = Math.toRadians((180 - degree).toDouble())
+                        val cosA = kotlin.math.cos(radians).toFloat()
+                        val sinA = kotlin.math.sin(radians).toFloat()
+                        val tickLength = when {
+                            degree % 10 == 0 -> 15.dp.toPx()
+                            degree % 5 == 0 -> 10.dp.toPx()
+                            else -> 5.dp.toPx()
+                        }
+                        drawLine(
+                            Color.White.copy(alpha = 0.95f),
+                            Offset(center.x + (radius - tickLength) * cosA, center.y - (radius - tickLength) * sinA),
+                            Offset(center.x + radius * cosA, center.y - radius * sinA),
+                            if (degree % 10 == 0) 1.5.dp.toPx() else 0.8.dp.toPx()
+                        )
+                        if (degree % 10 == 0) {
+                            val labelRadius = radius - 27.dp.toPx()
+                            val paint = android.graphics.Paint().apply {
+                                color = android.graphics.Color.WHITE
                                 textSize = 10.dp.toPx()
                                 textAlign = android.graphics.Paint.Align.CENTER
                                 isAntiAlias = true
+                                setShadowLayer(3f, 1f, 1f, android.graphics.Color.BLACK)
                             }
-                        )
+                            drawContext.canvas.nativeCanvas.drawText(
+                                degree.toString(),
+                                center.x + labelRadius * cosA,
+                                center.y - labelRadius * sinA + 4.dp.toPx(),
+                                paint
+                            )
+                        }
                     }
+                    val pointerRadians = Math.toRadians((180f - angle).toDouble())
+                    val pointerEnd = Offset(
+                        center.x + (radius - 18.dp.toPx()) * kotlin.math.cos(pointerRadians).toFloat(),
+                        center.y - (radius - 18.dp.toPx()) * kotlin.math.sin(pointerRadians).toFloat()
+                    )
+                    drawLine(Color(0xFFFF5252), center, pointerEnd, 3.dp.toPx())
+                    drawCircle(Color(0xFFFF5252), radius = 5.dp.toPx(), center = center)
                 }
-                val pointerRadians = Math.toRadians((180f - angle).toDouble())
-                val pointerEnd = Offset(
-                    center.x + (radius - 22.dp.toPx()) * kotlin.math.cos(pointerRadians).toFloat(),
-                    center.y - (radius - 22.dp.toPx()) * kotlin.math.sin(pointerRadians).toFloat()
-                )
-                drawLine(Color(0xFFD32F2F), center, pointerEnd, 3.dp.toPx())
-                drawCircle(Color(0xFFD32F2F), radius = 5.dp.toPx(), center = center)
+            }
+            cameraError?.let {
+                Spacer(Modifier.height(6.dp))
+                Text(it, color = Color(0xFFFFB74D), fontSize = 11.sp)
+            }
+            Text("The protractor is overlaid on the live rear-camera image. Align its baseline with one edge and the red arm with the other.", color = SecondaryText, fontSize = 11.sp, lineHeight = 16.sp)
+        } else {
+            Card(
+                Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F2E9)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Canvas(Modifier.fillMaxWidth().height(230.dp).padding(horizontal = 8.dp, vertical = 8.dp)) {
+                    val radius = (size.width / 2f - 14.dp.toPx()).coerceAtMost(size.height - 18.dp.toPx())
+                    val center = Offset(size.width / 2f, size.height - 12.dp.toPx())
+                    drawArc(
+                        color = Color(0xFF263238),
+                        startAngle = 180f,
+                        sweepAngle = 180f,
+                        useCenter = false,
+                        topLeft = Offset(center.x - radius, center.y - radius),
+                        size = androidx.compose.ui.geometry.Size(radius * 2f, radius * 2f),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
+                    )
+                    drawLine(Color(0xFF263238), Offset(center.x - radius, center.y), Offset(center.x + radius, center.y), 2.dp.toPx())
+                    for (degree in 0..180) {
+                        val radians = Math.toRadians((180 - degree).toDouble())
+                        val cosA = kotlin.math.cos(radians).toFloat()
+                        val sinA = kotlin.math.sin(radians).toFloat()
+                        val tickLength = when {
+                            degree % 10 == 0 -> 17.dp.toPx()
+                            degree % 5 == 0 -> 11.dp.toPx()
+                            else -> 6.dp.toPx()
+                        }
+                        drawLine(
+                            Color(0xFF263238),
+                            Offset(center.x + (radius - tickLength) * cosA, center.y - (radius - tickLength) * sinA),
+                            Offset(center.x + radius * cosA, center.y - radius * sinA),
+                            if (degree % 10 == 0) 1.5.dp.toPx() else 0.8.dp.toPx()
+                        )
+                        if (degree % 10 == 0) {
+                            val labelRadius = radius - 31.dp.toPx()
+                            drawContext.canvas.nativeCanvas.drawText(
+                                degree.toString(),
+                                center.x + labelRadius * cosA,
+                                center.y - labelRadius * sinA + 4.dp.toPx(),
+                                android.graphics.Paint().apply {
+                                    color = android.graphics.Color.BLACK
+                                    textSize = 10.dp.toPx()
+                                    textAlign = android.graphics.Paint.Align.CENTER
+                                    isAntiAlias = true
+                                }
+                            )
+                        }
+                    }
+                    val pointerRadians = Math.toRadians((180f - angle).toDouble())
+                    val pointerEnd = Offset(
+                        center.x + (radius - 22.dp.toPx()) * kotlin.math.cos(pointerRadians).toFloat(),
+                        center.y - (radius - 22.dp.toPx()) * kotlin.math.sin(pointerRadians).toFloat()
+                    )
+                    drawLine(Color(0xFFD32F2F), center, pointerEnd, 3.dp.toPx())
+                    drawCircle(Color(0xFFD32F2F), radius = 5.dp.toPx(), center = center)
+                }
             }
         }
 
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(16.dp))
         Card(colors = CardDefaults.cardColors(containerColor = SurfaceDark), shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.fillMaxWidth().padding(18.dp)) {
                 Text("MEASURED ANGLE", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -3924,10 +4125,11 @@ private fun ProtractorScreen(onBack: () -> Unit) {
         }
         Spacer(Modifier.height(12.dp))
         Text(
-            "Place the protractor baseline along one side of the angle, then adjust the red indicator to align with the other side. This is an on-screen guide; it does not use the camera to detect real-world angles.",
+            "This is an alignment guide, not automatic angle recognition. Use the slider to position the red arm; the camera view is live and is not recorded.",
             color = SecondaryText,
             fontSize = 11.sp,
             lineHeight = 16.sp
         )
     }
 }
+
