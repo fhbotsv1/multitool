@@ -4168,16 +4168,19 @@ private fun ARMeasureScreen(onBack: () -> Unit) {
         arSession = null
     }
 
-    DisposableEffect(lifecycleOwner, arSession, glView) {
+    val currentArSession by rememberUpdatedState(arSession)
+    val currentGlView by rememberUpdatedState(glView)
+
+    DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             when (event) {
                 androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
-                    runCatching { arSession?.resume() }
-                    runCatching { glView?.onResume() }
+                    runCatching { currentArSession?.resume() }
+                    runCatching { currentGlView?.onResume() }
                 }
                 androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> {
-                    runCatching { glView?.onPause() }
-                    runCatching { arSession?.pause() }
+                    runCatching { currentGlView?.onPause() }
+                    runCatching { currentArSession?.pause() }
                 }
                 else -> Unit
             }
