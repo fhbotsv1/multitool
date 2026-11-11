@@ -8,8 +8,10 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
+import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.os.VibratorManager
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.SystemClock
@@ -2304,6 +2306,15 @@ private fun StopwatchScreen(onBack: () -> Unit) {
 @Composable
 private fun CountdownTimerScreen(onBack: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val vibrator = remember(context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val manager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            manager.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
+    }
     var hoursText by remember { mutableStateOf("00") }
     var minutesText by remember { mutableStateOf("05") }
     var secondsText by remember { mutableStateOf("00") }
@@ -2349,19 +2360,16 @@ private fun CountdownTimerScreen(onBack: () -> Unit) {
     LaunchedEffect(showFinished) {
         if (showFinished) {
             val tone = ToneGenerator(AudioManager.STREAM_ALARM, 85)
-            @Suppress("DEPRECATION")
-            val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-
             try {
-                while (true) {
-                    if (vibrator.hasVibrator()) {
-                        vibrator.vibrate(
-                            VibrationEffect.createOneShot(
-                                500L,
-                                VibrationEffect.DEFAULT_AMPLITUDE
-                            )
+                if (vibrator.hasVibrator()) {
+                    vibrator.vibrate(
+                        VibrationEffect.createWaveform(
+                            longArrayOf(0L, 500L, 250L, 500L, 250L),
+                            0
                         )
-                    }
+                    )
+                }
+                while (true) {
                     tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 700)
                     kotlinx.coroutines.delay(1100L)
                 }
@@ -2500,6 +2508,24 @@ private fun CountdownTimerScreen(onBack: () -> Unit) {
             ) {
                 Text("Reset", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+        OutlinedButton(
+            onClick = {
+                if (vibrator.hasVibrator()) {
+                    vibrator.vibrate(
+                        VibrationEffect.createOneShot(600L, VibrationEffect.DEFAULT_AMPLITUDE)
+                    )
+                }
+            },
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+            enabled = vibrator.hasVibrator()
+        ) {
+            Text(
+                if (vibrator.hasVibrator()) "Test Vibration" else "No vibrator detected",
+                color = Color.White
+            )
         }
 
         Spacer(modifier = Modifier.height(24.dp))
