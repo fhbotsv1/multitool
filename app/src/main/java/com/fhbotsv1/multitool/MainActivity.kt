@@ -2865,36 +2865,38 @@ private fun FlashlightScreen(onBack: () -> Unit) {
         if (!flashAvailable || !hasCameraPermission || mode == "OFF") {
             if (hasCameraPermission) setFlash(false)
         } else {
-            try {
-                when (mode) {
-                    "ON" -> setFlash(true)
-                    "STROBE" -> {
-                        val interval = (1000f / (strobeHz * 2f)).toLong().coerceAtLeast(25L)
+            when (mode) {
+                "ON" -> setFlash(true)
+                "STROBE" -> {
+                    val interval = (1000f / (strobeHz * 2f)).toLong().coerceAtLeast(25L)
+                    try {
                         while (true) {
                             setFlash(true)
                             kotlinx.coroutines.delay(interval)
                             setFlash(false)
                             kotlinx.coroutines.delay(interval)
                         }
+                    } finally {
+                        setFlash(false)
                     }
-                    "SOS" -> {
-                        val pattern = listOf(
-                            180L, 180L, 180L, 180L, 180L, 540L,
-                            540L, 180L, 540L, 180L, 540L, 540L,
-                            180L, 180L, 180L, 180L, 180L, 900L
-                        )
+                }
+                "SOS" -> {
+                    val pattern = listOf(
+                        180L, 180L, 180L, 180L, 180L, 540L,
+                        540L, 180L, 540L, 180L, 540L, 540L,
+                        180L, 180L, 180L, 180L, 180L, 900L
+                    )
+                    try {
                         while (true) {
                             for (index in pattern.indices) {
                                 setFlash(index % 2 == 0)
                                 kotlinx.coroutines.delay(pattern[index])
                             }
                         }
+                    } finally {
+                        setFlash(false)
                     }
                 }
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } finally {
-                if (hasCameraPermission) setFlash(false)
             }
         }
     }
