@@ -276,6 +276,7 @@ fun MultiToolApp() {
                 "Metal Detector" -> MetalDetectorScreen(onBack = { selectedTool = null })
                 "Light Meter" -> LightMeterScreen(onBack = { selectedTool = null })
                 "Sound Meter" -> SoundMeterScreen(onBack = { selectedTool = null })
+                "Barometer" -> BarometerScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
@@ -1643,6 +1644,219 @@ private fun LightMeterScreen(onBack: () -> Unit) {
         Spacer(modifier = Modifier.weight(1f))
         Text(
             "The sensor is usually near the front camera or earpiece. Cover and uncover that area to test the reading. Values are approximate and depend on sensor placement and calibration.",
+            color = SecondaryText,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+        )
+    }
+}
+
+
+@Composable
+private fun BarometerScreen(onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sensorManager = remember {
+        context.getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
+    }
+    val pressureSensor = remember {
+        sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_PRESSURE)
+    }
+
+    var pressure by remember { mutableFloatStateOf(0f) }
+    var hasReading by remember { mutableStateOf(false) }
+    var sensorAvailable by remember { mutableStateOf(pressureSensor != null) }
+    var sensorStatus by remember { mutableStateOf("Waiting for pressure sensor…") }
+    var seaLevelText by remember { mutableStateOf("1013.25") }
+    var seaLevelPressure by remember { mutableFloatStateOf(1013.25f) }
+    var trend by remember { mutableStateOf("Collecting trend data…") }
+    var trendChange by remember { mutableFloatStateOf(0f) }
+    val pressureHistory = remember { mutableStateListOf<Pair<Long, Float>>() }
+
+    DisposableEffect(pressureSensor) {
+        if (pressureSensor == null) {
+            sensorAvailable = false
+            sensorStatus = "This phone does not have a barometer sensor."
+            onDispose { }
+        } else {
+            val listener = object : android.hardware.SensorEventListener {
+                override fun onSensorChanged(event: android.hardware.SensorEvent) {
+                    val value = event.values.firstOrNull() ?: return
+                    if (!value.isFinite() || value <= 0f) return
+                    pressure = value
+                    hasReading = true
+                    sensorStatus = "Barometer active"
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    pressureHistory.add(now to value)
+                    while (pressureHistory.isNotEmpty() && now - pressureHistory.first().first > 600_000L) {
+                        pressureHistory.removeAt(0)
+                    }
+                    val reference = pressureHistory.lastOrNull { now - it.first >= 180_000L }
+                    if (reference != null) {
+                        trendChange = value - reference.second
+                        trend = when {
+                            trendChange > 0.5f -> "Rising"
+                            trendChange < -0.5f -> "Falling"
+                            else -> "Stable"
+                        }
+                    } else {
+                        trend = "Collecting 3-minute trend…"
+                    }
+                }
+
+                override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {
+                    sensorStatus = when (accuracy) {
+                        android.hardware.SensorManager.SENSOR_STATUS_UNRELIABLE -> "Sensor accuracy unreliable"
+                        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_LOW -> "Sensor accuracy low"
+                        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM -> "Sensor accuracy medium"
+                        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> "Sensor accuracy high"
+                        else -> "Barometer active"
+                    }
+                }
+            }
+            val registered = sensorManager.registerListener(
+                listener,
+                pressureSensor,
+                android.hardware.SensorManager.SENSOR_DELAY_NORMAL
+            )
+            sensorAvailable = registered
+            if (!registered) sensorStatus = "Could not start barometer."
+            onDispose { sensorManager.unregisterListener(listener) }
+        }
+    }
+
+    val altitudeMeters = if (hasReading) {
+        android.hardware.SensorManager.getAltitude(seaLevelPressure, pressure)
+    } else 0f
+    val altitudeFeet = altitudeMeters * 3.28084f
+    val trendColor = when {
+        trend == "Rising" -> Color(0xFF81C784)
+        trend == "Falling" -> Color(0xFFFFB74D)
+        trend == "Stable" -> Accent
+        else -> SecondaryText
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Background).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹  Back", color = Accent, fontSize = 16.sp) }
+            Spacer(modifier = Modifier.weight(1f))
+            Text("BAROMETER", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(22.dp))
+
+        if (!sensorAvailable) {
+            Text("Barometer unavailable", color = Color(0xFFFFB74D), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(sensorStatus, color = SecondaryText, fontSize = 12.sp)
+        } else {
+            Text("ATMOSPHERIC PRESSURE", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                if (hasReading) String.format("%.2f", pressure) else "—",
+                color = Color.White,
+                fontSize = 52.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text("hPa  •  mbar", color = Accent, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(sensorStatus, color = SecondaryText, fontSize = 11.sp)
+
+            Spacer(modifier = Modifier.height(18.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Card(
+                    modifier = Modifier.weight(1f),
+                    colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+                        Text("EST. ALTITUDE", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(if (hasReading) String.format("%.1f m", altitudeMeters) else "—", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        Text(if (hasReading) String.format("%.0f ft", altitudeFeet) else "—", color = SecondaryText, fontSize = 12.sp)
+                    }
+                }
+                Card(
+                    modifier = Modifier.weight(1f),
+                    colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+                        Text("3-MIN PRESSURE TREND", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(trend, color = trendColor, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        Text(if (pressureHistory.size > 1 && trendChange != 0f) String.format("%+.2f hPa", trendChange) else "Building history", color = SecondaryText, fontSize = 12.sp)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("ALTITUDE CALIBRATION", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "Set local sea-level pressure from a trusted weather station for a more useful altitude estimate.",
+                        color = SecondaryText,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = seaLevelText,
+                        onValueChange = { seaLevelText = it.filter { ch -> ch.isDigit() || ch == '.' }.take(7) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Sea-level pressure (hPa)") },
+                        suffix = { Text("hPa") },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Accent,
+                            unfocusedBorderColor = SecondaryText,
+                            focusedLabelColor = Accent,
+                            unfocusedLabelColor = SecondaryText,
+                            cursorColor = Accent
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = {
+                                val entered = seaLevelText.toFloatOrNull()
+                                if (entered != null && entered in 800f..1100f) seaLevelPressure = entered
+                            },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = Accent)
+                        ) {
+                            Text("Apply", color = Color(0xFF101522), fontWeight = FontWeight.Bold)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                seaLevelText = "1013.25"
+                                seaLevelPressure = 1013.25f
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Standard", color = Color.White) }
+                    }
+                    Text(
+                        String.format("Altitude reference: %.2f hPa", seaLevelPressure),
+                        color = SecondaryText,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            "Altitude is estimated from pressure and the selected sea-level reference; weather changes affect accuracy. Pressure readings are local sensor values, not a weather forecast. No location permission is needed.",
             color = SecondaryText,
             fontSize = 11.sp,
             lineHeight = 16.sp
