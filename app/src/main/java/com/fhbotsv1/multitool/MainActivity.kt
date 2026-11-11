@@ -291,6 +291,7 @@ fun MultiToolApp() {
                 "Timer" -> CountdownTimerScreen(onBack = { selectedTool = null })
                 "Unit Converter" -> UnitConverterScreen(onBack = { selectedTool = null })
                 "Flashlight" -> FlashlightScreen(onBack = { selectedTool = null })
+                "QR Scanner" -> QrScannerScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
@@ -3039,5 +3040,246 @@ private fun FlashlightScreen(onBack: () -> Unit) {
             fontSize = 11.sp,
             lineHeight = 16.sp
         )
+    }
+}
+
+
+@Composable
+private fun QrScannerScreen(onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val lifecycleOwner = context as androidx.lifecycle.LifecycleOwner
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { hasCameraPermission = it }
+
+    var previewView by remember { mutableStateOf<androidx.camera.view.PreviewView?>(null) }
+    var cameraError by remember { mutableStateOf<String?>(null) }
+    var latestResult by remember { mutableStateOf<String?>(null) }
+    val history = remember { mutableStateListOf<String>() }
+    val scanner = remember {
+        com.google.mlkit.vision.barcode.BarcodeScanning.getClient(
+            com.google.mlkit.vision.barcode.BarcodeScannerOptions.Builder()
+                .setBarcodeFormats(com.google.mlkit.vision.barcode.common.Barcode.FORMAT_ALL_FORMATS)
+                .build()
+        )
+    }
+
+    DisposableEffect(scanner) {
+        onDispose { scanner.close() }
+    }
+
+    LaunchedEffect(previewView, hasCameraPermission) {
+        val view = previewView
+        if (view != null && hasCameraPermission) {
+            try {
+                val providerFuture = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context)
+                providerFuture.addListener({
+                    try {
+                        val provider = providerFuture.get()
+                        val preview = androidx.camera.core.Preview.Builder().build().also {
+                            it.surfaceProvider = view.surfaceProvider
+                        }
+                        val analysis = androidx.camera.core.ImageAnalysis.Builder()
+                            .setBackpressureStrategy(
+                                androidx.camera.core.ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
+                            )
+                            .build()
+                        analysis.setAnalyzer(ContextCompat.getMainExecutor(context)) { imageProxy ->
+                            val mediaImage = imageProxy.image
+                            if (mediaImage == null) {
+                                imageProxy.close()
+                            } else {
+                                val image = com.google.mlkit.vision.common.InputImage.fromMediaImage(
+                                    mediaImage,
+                                    imageProxy.imageInfo.rotationDegrees
+                                )
+                                scanner.process(image)
+                                    .addOnSuccessListener(ContextCompat.getMainExecutor(context)) { barcodes ->
+                                        val value = barcodes.firstNotNullOfOrNull { barcode ->
+                                            barcode.rawValue?.takeIf { it.isNotBlank() }
+                                        }
+                                        if (value != null && value != latestResult) {
+                                            latestResult = value
+                                            if (history.firstOrNull() != value) {
+                                                history.add(0, value)
+                                                while (history.size > 20) history.removeAt(history.lastIndex)
+                                            }
+                                        }
+                                    }
+                                    .addOnFailureListener(ContextCompat.getMainExecutor(context)) {
+                                        cameraError = it.localizedMessage ?: "Barcode scanning failed."
+                                    }
+                                    .addOnCompleteListener { imageProxy.close() }
+                            }
+                        }
+                        provider.unbindAll()
+                        provider.bindToLifecycle(
+                            lifecycleOwner,
+                            androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA,
+                            preview,
+                            analysis
+                        )
+                        cameraError = null
+                    } catch (exception: Exception) {
+                        cameraError = exception.localizedMessage ?: "Unable to start the camera preview."
+                    }
+                }, ContextCompat.getMainExecutor(context))
+            } catch (exception: Exception) {
+                cameraError = exception.localizedMessage ?: "Camera is unavailable."
+            }
+        }
+    }
+
+    DisposableEffect(previewView, hasCameraPermission) {
+        onDispose {
+            runCatching {
+                androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context).get().unbindAll()
+            }
+        }
+    }
+
+    fun copyResult(value: String) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Scanned code", value))
+    }
+
+    fun openResult(value: String) {
+        val candidate = value.trim()
+        val url = if (candidate.startsWith("https://", true) || candidate.startsWith("http://", true)) {
+            candidate
+        } else if (candidate.contains(".") && !candidate.contains(" ") && candidate.substringBefore("/").contains(".")) {
+            "https://$candidate"
+        } else null
+        if (url != null) {
+            runCatching {
+                context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
+            }.onFailure {
+                cameraError = "No app is available to open this link."
+            }
+        } else {
+            cameraError = "The scanned content is not a web link."
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Background)
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onBack) { Text("‹  Back", color = Accent) }
+            Spacer(modifier = Modifier.weight(1f))
+            Text("QR & BARCODE SCANNER", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        if (hasCameraPermission) {
+            AndroidView(
+                factory = { viewContext ->
+                    androidx.camera.view.PreviewView(viewContext).apply {
+                        scaleType = androidx.camera.view.PreviewView.ScaleType.FILL_CENTER
+                        implementationMode = androidx.camera.view.PreviewView.ImplementationMode.COMPATIBLE
+                        previewView = this
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(300.dp)
+                    .clip(RoundedCornerShape(20.dp))
+            )
+        } else {
+            Card(
+                modifier = Modifier.fillMaxWidth().height(220.dp),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(20.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Camera access is needed to scan codes.", color = Color.White)
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
+                        Text("Grant camera access")
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Point the camera at a QR code or barcode. Scanning happens live; no photo or video is saved.", color = SecondaryText, fontSize = 12.sp, lineHeight = 17.sp)
+        cameraError?.let {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(it, color = Color(0xFFFFB74D), fontSize = 12.sp)
+        }
+
+        latestResult?.let { value ->
+            Spacer(modifier = Modifier.height(18.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF20364D)),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("LATEST SCAN", color = Accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(value, color = Color.White, fontSize = 15.sp)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { copyResult(value) }) {
+                            Text("Copy", color = Color.White)
+                        }
+                        OutlinedButton(onClick = { openResult(value) }) {
+                            Text("Open link", color = Color.White)
+                        }
+                        TextButton(onClick = { latestResult = null }) {
+                            Text("Dismiss", color = Accent)
+                        }
+                    }
+                }
+            }
+        }
+
+        if (history.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(20.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("SCAN HISTORY", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.weight(1f))
+                TextButton(onClick = { history.clear(); latestResult = null }) {
+                    Text("Clear", color = Accent)
+                }
+            }
+            history.forEachIndexed { index, value ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(value, color = Color.White, fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 2)
+                        TextButton(onClick = { copyResult(value) }) {
+                            Text("Copy", color = Accent)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
