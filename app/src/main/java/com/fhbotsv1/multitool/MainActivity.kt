@@ -277,6 +277,7 @@ fun MultiToolApp() {
                 "Light Meter" -> LightMeterScreen(onBack = { selectedTool = null })
                 "Sound Meter" -> SoundMeterScreen(onBack = { selectedTool = null })
                 "Barometer" -> BarometerScreen(onBack = { selectedTool = null })
+                "Vibration Meter" -> VibrationMeterScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
@@ -1857,6 +1858,235 @@ private fun BarometerScreen(onBack: () -> Unit) {
         Spacer(modifier = Modifier.weight(1f))
         Text(
             "Altitude is estimated from pressure and the selected sea-level reference; weather changes affect accuracy. Pressure readings are local sensor values, not a weather forecast. No location permission is needed.",
+            color = SecondaryText,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+        )
+    }
+}
+
+
+@Composable
+private fun VibrationMeterScreen(onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sensorManager = remember {
+        context.getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
+    }
+    val linearSensor = remember {
+        sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_LINEAR_ACCELERATION)
+    }
+    val accelerometer = remember {
+        sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
+    }
+    val activeSensor = linearSensor ?: accelerometer
+
+    var measuring by remember { mutableStateOf(true) }
+    var sensorAvailable by remember { mutableStateOf(activeSensor != null) }
+    var hasReading by remember { mutableStateOf(false) }
+    var current by remember { mutableFloatStateOf(0f) }
+    var peak by remember { mutableFloatStateOf(0f) }
+    var rms by remember { mutableFloatStateOf(0f) }
+    var sampleCount by remember { mutableIntStateOf(0) }
+    var sensorStatus by remember {
+        mutableStateOf(
+            when {
+                linearSensor != null -> "Linear acceleration sensor"
+                accelerometer != null -> "Accelerometer with gravity filtering"
+                else -> "No compatible motion sensor found"
+            }
+        )
+    }
+
+    DisposableEffect(activeSensor, measuring) {
+        if (activeSensor == null || !measuring) {
+            onDispose { }
+        } else {
+            val gravity = FloatArray(3)
+            var sumSquares = 0.0
+            var count = 0
+            var smoothed = 0f
+            var first = true
+            val listener = object : android.hardware.SensorEventListener {
+                override fun onSensorChanged(event: android.hardware.SensorEvent) {
+                    val values = event.values
+                    if (values.size < 3) return
+                    val ax: Float
+                    val ay: Float
+                    val az: Float
+                    if (linearSensor != null) {
+                        ax = values[0]
+                        ay = values[1]
+                        az = values[2]
+                    } else {
+                        val alpha = 0.85f
+                        gravity[0] = alpha * gravity[0] + (1f - alpha) * values[0]
+                        gravity[1] = alpha * gravity[1] + (1f - alpha) * values[1]
+                        gravity[2] = alpha * gravity[2] + (1f - alpha) * values[2]
+                        ax = values[0] - gravity[0]
+                        ay = values[1] - gravity[1]
+                        az = values[2] - gravity[2]
+                    }
+                    val magnitude = kotlin.math.sqrt(ax * ax + ay * ay + az * az)
+                    if (!magnitude.isFinite()) return
+                    smoothed = if (first) {
+                        first = false
+                        magnitude
+                    } else {
+                        smoothed + (magnitude - smoothed) * 0.35f
+                    }
+                    current = smoothed
+                    peak = maxOf(peak, smoothed)
+                    sumSquares += magnitude.toDouble() * magnitude.toDouble()
+                    count++
+                    if (count >= 20) {
+                        rms = kotlin.math.sqrt(sumSquares / count).toFloat()
+                        sampleCount += count
+                        sumSquares = 0.0
+                        count = 0
+                    }
+                    hasReading = true
+                }
+
+                override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {
+                    sensorStatus = when (accuracy) {
+                        android.hardware.SensorManager.SENSOR_STATUS_UNRELIABLE -> "Sensor accuracy unreliable"
+                        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_LOW -> "Sensor accuracy low"
+                        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM -> "Sensor accuracy medium"
+                        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> "Sensor accuracy high"
+                        else -> if (linearSensor != null) "Linear acceleration sensor" else "Gravity-filtered accelerometer"
+                    }
+                }
+            }
+            val registered = sensorManager.registerListener(
+                listener,
+                activeSensor,
+                android.hardware.SensorManager.SENSOR_DELAY_GAME
+            )
+            sensorAvailable = registered
+            if (!registered) sensorStatus = "Could not start motion sensor."
+            onDispose { sensorManager.unregisterListener(listener) }
+        }
+    }
+
+    val level = when {
+        current < 0.15f -> "Very low"
+        current < 0.5f -> "Low"
+        current < 1.5f -> "Moderate"
+        current < 3f -> "Strong"
+        else -> "Very strong"
+    }
+    val levelColor = when {
+        current < 0.5f -> Color(0xFF81C784)
+        current < 1.5f -> Color(0xFFFFD54F)
+        current < 3f -> Color(0xFFFFB74D)
+        else -> Color(0xFFFF5252)
+    }
+    val progress = (current / 5f).coerceIn(0f, 1f)
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Background).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹  Back", color = Accent, fontSize = 16.sp) }
+            Spacer(modifier = Modifier.weight(1f))
+            Text("VIBRATION METER", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(22.dp))
+
+        if (!sensorAvailable) {
+            Text("Motion sensor unavailable", color = Color(0xFFFFB74D), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(sensorStatus, color = SecondaryText, fontSize = 12.sp)
+        } else {
+            Text("LIVE VIBRATION", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                if (hasReading) String.format("%.3f", current) else "—",
+                color = Color.White,
+                fontSize = 54.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text("m/s²  •  acceleration", color = Accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(if (!measuring) "Paused" else if (hasReading) level else "Waiting for motion…", color = if (measuring) levelColor else SecondaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+
+            Spacer(modifier = Modifier.height(22.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+                    Text("VIBRATION INTENSITY", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(14.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(Color(0xFF303B4D))
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth(progress).fillMaxHeight()
+                                .background(levelColor, RoundedCornerShape(50))
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("0 m/s²", color = SecondaryText, fontSize = 10.sp)
+                        Text("5+ m/s²", color = SecondaryText, fontSize = 10.sp)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                listOf(
+                    "PEAK" to if (hasReading) String.format("%.3f", peak) else "—",
+                    "RMS" to if (hasReading) String.format("%.3f", rms) else "—"
+                ).forEach { item ->
+                    Card(
+                        modifier = Modifier.weight(1f),
+                        colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(item.first, color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(item.second, color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                            Text("m/s²", color = SecondaryText, fontSize = 10.sp)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(sensorStatus, color = SecondaryText, fontSize = 11.sp)
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = { measuring = !measuring },
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent)
+                ) {
+                    Text(if (measuring) "Pause" else "Resume", color = Color(0xFF101522), fontWeight = FontWeight.Bold)
+                }
+                OutlinedButton(
+                    onClick = {
+                        current = 0f
+                        peak = 0f
+                        rms = 0f
+                        sampleCount = 0
+                        hasReading = false
+                    },
+                    modifier = Modifier.weight(1f).height(48.dp)
+                ) { Text("Reset stats", color = Color.White) }
+            }
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            "Place the phone on a stable surface, then gently tap or move the surface to test. Values are approximate and depend on sensor quality, mounting and phone movement. This is not a certified machinery or structural vibration analyser.",
             color = SecondaryText,
             fontSize = 11.sp,
             lineHeight = 16.sp
