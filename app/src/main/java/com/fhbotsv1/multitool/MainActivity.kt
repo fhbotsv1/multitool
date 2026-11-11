@@ -8,10 +8,8 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
-import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
-import android.os.VibratorManager
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.SystemClock
@@ -2351,26 +2349,21 @@ private fun CountdownTimerScreen(onBack: () -> Unit) {
     LaunchedEffect(showFinished) {
         if (showFinished) {
             val tone = ToneGenerator(AudioManager.STREAM_ALARM, 85)
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                context.getSystemService(VibratorManager::class.java).defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-            }
+            @Suppress("DEPRECATION")
+            val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
 
             try {
-                if (vibrator.hasVibrator()) {
-                    vibrator.vibrate(
-                        VibrationEffect.createWaveform(
-                            longArrayOf(0L, 450L, 250L, 450L, 600L),
-                            0
-                        )
-                    )
-                }
-
                 while (true) {
+                    if (vibrator.hasVibrator()) {
+                        vibrator.vibrate(
+                            VibrationEffect.createOneShot(
+                                500L,
+                                VibrationEffect.DEFAULT_AMPLITUDE
+                            )
+                        )
+                    }
                     tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 700)
-                    kotlinx.coroutines.delay(1000L)
+                    kotlinx.coroutines.delay(1100L)
                 }
             } finally {
                 tone.stopTone()
