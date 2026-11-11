@@ -681,7 +681,7 @@ private fun CompassScreen(onBack: () -> Unit) {
         }
     }
 
-    val trueAzimuth = (magneticAzimuth + if (hasTrueNorthCorrection) declination else 0f + 360f) % 360f
+    val trueAzimuth = (magneticAzimuth + (if (hasTrueNorthCorrection) declination else 0f) + 360f) % 360f
     val heading = if (hasTrueNorthCorrection) trueAzimuth else magneticAzimuth
     val direction = when {
         heading >= 337.5f || heading < 22.5f -> "N"
