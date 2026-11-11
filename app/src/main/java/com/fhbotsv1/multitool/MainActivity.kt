@@ -505,10 +505,10 @@ private fun SpeedometerScreen(onBack: () -> Unit) {
         }
         Spacer(modifier = Modifier.height(18.dp))
         Text(gpsStatus, color = if (gpsStatus.startsWith("GPS connected")) Color(0xFF81C784) else SecondaryText, fontSize = 13.sp)
-        if (gpsAccuracy > 0f) Text("Accuracy ±\${gpsAccuracy.toInt()} m", color = SecondaryText, fontSize = 11.sp)
+        if (gpsAccuracy > 0f) Text("Accuracy ±${gpsAccuracy.toInt()} m", color = SecondaryText, fontSize = 11.sp)
         Spacer(modifier = Modifier.height(24.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            SpeedStatCard("MAX SPEED", "\${maxSpeed.toInt()} km/h", Modifier.weight(1f))
+            SpeedStatCard("MAX SPEED", "${maxSpeed}.toInt()} km/h", Modifier.weight(1f))
             SpeedStatCard("TRIP DISTANCE", String.format("%.2f km", tripDistance / 1000f), Modifier.weight(1f))
         }
         Spacer(modifier = Modifier.height(28.dp))
