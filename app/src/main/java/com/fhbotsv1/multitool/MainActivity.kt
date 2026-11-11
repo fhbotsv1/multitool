@@ -13,6 +13,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -683,6 +686,21 @@ private fun CompassScreen(onBack: () -> Unit) {
 
     val trueAzimuth = (magneticAzimuth + (if (hasTrueNorthCorrection) declination else 0f) + 360f) % 360f
     val heading = if (hasTrueNorthCorrection) trueAzimuth else magneticAzimuth
+
+    // Animate along the shortest angular path, including across 0°/360°.
+    val needleRotation = remember { Animatable(0f) }
+    LaunchedEffect(heading, sensorReady) {
+        if (sensorReady) {
+            val current = needleRotation.value
+            val currentWrapped = ((current % 360f) + 360f) % 360f
+            val difference = ((heading - currentWrapped + 540f) % 360f) - 180f
+            needleRotation.animateTo(
+                targetValue = current + difference,
+                animationSpec = tween(durationMillis = 100, easing = LinearEasing)
+            )
+        }
+    }
+
     val direction = when {
         heading >= 337.5f || heading < 22.5f -> "N"
         heading < 67.5f -> "NE"
@@ -734,7 +752,7 @@ private fun CompassScreen(onBack: () -> Unit) {
                         strokeWidth = if (i % 6 == 0) 2.5.dp.toPx() else 1.dp.toPx()
                     )
                 }
-                rotate(degrees = -heading, pivot = center) {
+                rotate(degrees = -needleRotation.value, pivot = center) {
                     val needle = androidx.compose.ui.graphics.Path().apply {
                         moveTo(center.x, center.y - radius * 0.66f)
                         lineTo(center.x - radius * 0.12f, center.y + radius * 0.12f)
