@@ -272,6 +272,7 @@ fun MultiToolApp() {
                 "Speedometer" -> SpeedometerScreen(onBack = { selectedTool = null })
                 "Compass" -> CompassScreen(onBack = { selectedTool = null })
                 "Magnetic Detector" -> MagneticFieldScreen(onBack = { selectedTool = null })
+                "Light Meter" -> LightMeterScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
@@ -1031,5 +1032,172 @@ private fun MagneticAxisValue(label: String, value: Float) {
         Spacer(modifier = Modifier.height(4.dp))
         Text(String.format("%+.1f", value), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         Text("µT", color = SecondaryText, fontSize = 10.sp)
+    }
+}
+
+
+@Composable
+private fun LightMeterScreen(onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sensorManager = remember {
+        context.getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
+    }
+    val lightSensor = remember {
+        sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_LIGHT)
+    }
+
+    var lux by remember { mutableFloatStateOf(0f) }
+    var minLux by remember { mutableFloatStateOf(Float.MAX_VALUE) }
+    var maxLux by remember { mutableFloatStateOf(0f) }
+    var sensorAvailable by remember { mutableStateOf(lightSensor != null) }
+    var hasReading by remember { mutableStateOf(false) }
+
+    DisposableEffect(lightSensor) {
+        if (lightSensor == null) {
+            sensorAvailable = false
+            onDispose { }
+        } else {
+            val listener = object : android.hardware.SensorEventListener {
+                override fun onSensorChanged(event: android.hardware.SensorEvent) {
+                    val reading = event.values.firstOrNull()?.coerceAtLeast(0f) ?: return
+                    lux = reading
+                    minLux = minOf(minLux, reading)
+                    maxLux = maxOf(maxLux, reading)
+                    hasReading = true
+                }
+
+                override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) = Unit
+            }
+            val registered = sensorManager.registerListener(
+                listener,
+                lightSensor,
+                android.hardware.SensorManager.SENSOR_DELAY_UI
+            )
+            sensorAvailable = registered
+            onDispose { sensorManager.unregisterListener(listener) }
+        }
+    }
+
+    val environment = when {
+        lux < 1f -> "Very dark"
+        lux < 50f -> "Dim"
+        lux < 200f -> "Indoor"
+        lux < 500f -> "Bright indoor"
+        lux < 10000f -> "Outdoor"
+        else -> "Very bright sunlight"
+    }
+    val progress = (kotlin.math.ln(1f + lux) / kotlin.math.ln(100001f)).coerceIn(0f, 1f)
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Background).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹  Back", color = Accent, fontSize = 16.sp) }
+            Spacer(modifier = Modifier.weight(1f))
+            Text("LIGHT METER", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        if (!sensorAvailable) {
+            Text("Ambient light sensor unavailable", color = Color(0xFFFFB74D), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("This phone does not expose a working light sensor.", color = SecondaryText, fontSize = 12.sp)
+        } else {
+            Text("AMBIENT ILLUMINANCE", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                if (hasReading) String.format("%,.1f", lux) else "—",
+                color = Color.White,
+                fontSize = 58.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text("lux", color = Accent, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                if (hasReading) environment else "Waiting for sensor…",
+                color = Accent,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+
+            Spacer(modifier = Modifier.height(28.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+                    Text("LIGHT LEVEL", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(12.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(Color(0xFF303B4D))
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth(progress).fillMaxHeight()
+                                .background(Accent, RoundedCornerShape(50))
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Dark", color = SecondaryText, fontSize = 10.sp)
+                        Text("Bright", color = SecondaryText, fontSize = 10.sp)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Card(
+                    modifier = Modifier.weight(1f),
+                    colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+                        Text("MINIMUM", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(if (hasReading) String.format("%.1f", minLux) else "—", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                        Text("lux", color = SecondaryText, fontSize = 11.sp)
+                    }
+                }
+                Card(
+                    modifier = Modifier.weight(1f),
+                    colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+                        Text("MAXIMUM", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(if (hasReading) String.format("%.1f", maxLux) else "—", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                        Text("lux", color = SecondaryText, fontSize = 11.sp)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+            OutlinedButton(
+                onClick = {
+                    minLux = lux
+                    maxLux = lux
+                },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                enabled = hasReading
+            ) {
+                Text("Reset min / max readings", color = Color.White)
+            }
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            "The sensor is usually near the front camera or earpiece. Cover and uncover that area to test the reading. Values are approximate and depend on sensor placement and calibration.",
+            color = SecondaryText,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+        )
     }
 }
