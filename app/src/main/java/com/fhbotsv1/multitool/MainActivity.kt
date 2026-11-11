@@ -25,6 +25,9 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -293,6 +296,7 @@ fun MultiToolApp() {
                 "Flashlight" -> FlashlightScreen(onBack = { selectedTool = null })
                 "QR Scanner" -> QrScannerScreen(onBack = { selectedTool = null })
                 "Color Detector" -> ColorDetectorScreen(onBack = { selectedTool = null })
+                "Screen Tester" -> ScreenTesterScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
@@ -3564,5 +3568,149 @@ private fun ColorDetectorScreen(onBack: () -> Unit) {
         }
         Spacer(modifier = Modifier.height(12.dp))
         Text("Color readings are approximate. Lighting, camera white balance, reflections and screen calibration can change the result.", color = SecondaryText, fontSize = 11.sp, lineHeight = 16.sp)
+    }
+}
+
+
+@Composable
+private fun ScreenTesterScreen(onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var testMode by remember { mutableStateOf("MENU") }
+    var colorIndex by remember { mutableIntStateOf(0) }
+    val testColors = listOf("White" to Color.White, "Black" to Color.Black, "Red" to Color.Red, "Green" to Color.Green, "Blue" to Color.Blue)
+    val touchedCells = remember { mutableStateListOf<Int>() }
+    val touchMarks = remember { mutableStateListOf<Offset>() }
+    val activeTouches = remember { mutableStateListOf<Offset>() }
+    val metrics = remember {
+        val dm = context.resources.displayMetrics
+        val refresh = if (android.os.Build.VERSION.SDK_INT >= 30) {
+            context.display?.refreshRate ?: dm.refreshRate
+        } else {
+            @Suppress("DEPRECATION")
+            (context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay.refreshRate
+        }
+        Triple(dm.widthPixels, dm.heightPixels, refresh)
+    }
+
+    Column(Modifier.fillMaxSize().background(Background).padding(16.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { if (testMode == "MENU") onBack() else testMode = "MENU" }) {
+                Text(if (testMode == "MENU") "‹  Back" else "‹  Tests", color = Accent)
+            }
+            Spacer(Modifier.weight(1f))
+            Text("SCREEN TESTER", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
+
+        when (testMode) {
+            "DISPLAY" -> {
+                Text("Display colour test", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Look for dead pixels, discoloration or uneven brightness.", color = SecondaryText, fontSize = 12.sp)
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    Modifier.weight(1f).fillMaxWidth().background(testColors[colorIndex].second, RoundedCornerShape(12.dp))
+                        .clickable { colorIndex = (colorIndex + 1) % testColors.size },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(testColors[colorIndex].first, color = if (colorIndex == 1) Color.White else Color.DarkGray, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { colorIndex = (colorIndex - 1 + testColors.size) % testColors.size }, modifier = Modifier.weight(1f)) { Text("Previous", color = Color.White) }
+                    Button(onClick = { colorIndex = (colorIndex + 1) % testColors.size }, modifier = Modifier.weight(1f)) { Text("Next colour") }
+                }
+            }
+            "TOUCH" -> {
+                Text("Touch drawing test", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Drag your finger across the area. Use multiple fingers to test multi-touch.", color = SecondaryText, fontSize = 12.sp)
+                Spacer(Modifier.height(10.dp))
+                Box(
+                    Modifier.weight(1f).fillMaxWidth().background(Color(0xFF080D16), RoundedCornerShape(16.dp))
+                        .pointerInteropFilter { event ->
+                            when (event.actionMasked) {
+                                android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_POINTER_DOWN, android.view.MotionEvent.ACTION_MOVE -> {
+                                    activeTouches.clear()
+                                    for (i in 0 until event.pointerCount) {
+                                        val point = Offset(event.getX(i), event.getY(i))
+                                        activeTouches.add(point)
+                                        if (event.actionMasked != android.view.MotionEvent.ACTION_MOVE || i == event.actionIndex) touchMarks.add(point)
+                                    }
+                                    while (touchMarks.size > 1800) touchMarks.removeAt(0)
+                                }
+                                android.view.MotionEvent.ACTION_POINTER_UP -> {
+                                    activeTouches.clear()
+                                    for (i in 0 until event.pointerCount) if (i != event.actionIndex) activeTouches.add(Offset(event.getX(i), event.getY(i)))
+                                }
+                                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> activeTouches.clear()
+                            }
+                            true
+                        }
+                ) {
+                    Canvas(Modifier.fillMaxSize()) {
+                        touchMarks.forEach { drawCircle(Color(0xFF64B5F6), radius = 5f, center = it) }
+                        activeTouches.forEach { drawCircle(Color(0xFFFFD54F), radius = 24f, center = it, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f)) }
+                    }
+                    Text("${activeTouches.size} active touch point(s)", color = Color.White, modifier = Modifier.align(Alignment.TopCenter).padding(12.dp), fontSize = 12.sp)
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Touch points recorded: ${touchMarks.size}", color = SecondaryText, modifier = Modifier.weight(1f), fontSize = 12.sp)
+                    TextButton(onClick = { touchMarks.clear(); activeTouches.clear() }) { Text("Clear", color = Accent) }
+                }
+            }
+            "GRID" -> {
+                Text("Touch grid test", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Tap each square. Each should change colour when touched.", color = SecondaryText, fontSize = 12.sp)
+                Spacer(Modifier.height(14.dp))
+                Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    repeat(8) { row ->
+                        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            repeat(5) { column ->
+                                val index = row * 5 + column
+                                Box(
+                                    Modifier.weight(1f).fillMaxHeight().background(if (touchedCells.contains(index)) Color(0xFF2E7D5B) else SurfaceDark, RoundedCornerShape(7.dp))
+                                        .clickable { if (!touchedCells.contains(index)) touchedCells.add(index) },
+                                    contentAlignment = Alignment.Center
+                                ) { Text(if (touchedCells.contains(index)) "✓" else "${index + 1}", color = Color.White, fontSize = 12.sp) }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${touchedCells.size}/40 areas tested", color = SecondaryText, modifier = Modifier.weight(1f), fontSize = 12.sp)
+                    TextButton(onClick = { touchedCells.clear() }) { Text("Reset", color = Accent) }
+                }
+            }
+            else -> {
+                Text("Test your display and touchscreen", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                Text("Run these checks to find display or touch issues.", color = SecondaryText, fontSize = 13.sp)
+                Spacer(Modifier.height(22.dp))
+                listOf(
+                    Triple("Display colour test", "Show white, black, red, green and blue screens", "DISPLAY"),
+                    Triple("Touch drawing test", "Draw with one or more fingers", "TOUCH"),
+                    Triple("Touch grid test", "Check all 40 screen areas", "GRID")
+                ).forEach { item ->
+                    Card(Modifier.fillMaxWidth().padding(bottom = 12.dp).clickable {
+                        testMode = item.third
+                        if (item.third == "TOUCH") { touchMarks.clear(); activeTouches.clear() }
+                    }, colors = CardDefaults.cardColors(containerColor = SurfaceDark), shape = RoundedCornerShape(16.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(17.dp)) {
+                            Text(item.first, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(5.dp))
+                            Text(item.second, color = SecondaryText, fontSize = 12.sp)
+                        }
+                    }
+                }
+                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = SurfaceDark), shape = RoundedCornerShape(16.dp)) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("SCREEN INFORMATION", color = Accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(10.dp))
+                        Text("Resolution: ${metrics.first} × ${metrics.second} pixels", color = Color.White, fontSize = 14.sp)
+                        Spacer(Modifier.height(5.dp))
+                        Text("Reported refresh rate: ${"%.1f".format(metrics.third)} Hz", color = Color.White, fontSize = 14.sp)
+                    }
+                }
+            }
+        }
     }
 }
