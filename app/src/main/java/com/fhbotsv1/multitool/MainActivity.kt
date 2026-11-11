@@ -289,6 +289,7 @@ fun MultiToolApp() {
                 "Vibration Meter" -> VibrationMeterScreen(onBack = { selectedTool = null })
                 "Stopwatch" -> StopwatchScreen(onBack = { selectedTool = null })
                 "Timer" -> CountdownTimerScreen(onBack = { selectedTool = null })
+                "Unit Converter" -> UnitConverterScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
@@ -2531,5 +2532,289 @@ private fun CountdownTimerScreen(onBack: () -> Unit) {
                 }
             }
         )
+    }
+}
+
+
+private data class ConverterUnit(
+    val name: String,
+    val symbol: String,
+    val factor: Double = 1.0
+)
+
+private fun converterUnits(category: String): List<ConverterUnit> = when (category) {
+    "Length" -> listOf(
+        ConverterUnit("Millimetre", "mm", 0.001),
+        ConverterUnit("Centimetre", "cm", 0.01),
+        ConverterUnit("Metre", "m", 1.0),
+        ConverterUnit("Kilometre", "km", 1000.0),
+        ConverterUnit("Inch", "in", 0.0254),
+        ConverterUnit("Foot", "ft", 0.3048),
+        ConverterUnit("Yard", "yd", 0.9144),
+        ConverterUnit("Mile", "mi", 1609.344)
+    )
+    "Weight" -> listOf(
+        ConverterUnit("Milligram", "mg", 0.000001),
+        ConverterUnit("Gram", "g", 0.001),
+        ConverterUnit("Kilogram", "kg", 1.0),
+        ConverterUnit("Metric tonne", "t", 1000.0),
+        ConverterUnit("Ounce", "oz", 0.028349523125),
+        ConverterUnit("Pound", "lb", 0.45359237)
+    )
+    "Temperature" -> listOf(
+        ConverterUnit("Celsius", "°C"),
+        ConverterUnit("Fahrenheit", "°F"),
+        ConverterUnit("Kelvin", "K")
+    )
+    "Speed" -> listOf(
+        ConverterUnit("Metres per second", "m/s", 1.0),
+        ConverterUnit("Kilometres per hour", "km/h", 1.0 / 3.6),
+        ConverterUnit("Miles per hour", "mph", 0.44704),
+        ConverterUnit("Knot", "kn", 0.514444444444)
+    )
+    "Area" -> listOf(
+        ConverterUnit("Square millimetre", "mm²", 0.000001),
+        ConverterUnit("Square centimetre", "cm²", 0.0001),
+        ConverterUnit("Square metre", "m²", 1.0),
+        ConverterUnit("Square kilometre", "km²", 1_000_000.0),
+        ConverterUnit("Hectare", "ha", 10_000.0),
+        ConverterUnit("Acre", "ac", 4046.8564224),
+        ConverterUnit("Square foot", "ft²", 0.09290304)
+    )
+    "Volume" -> listOf(
+        ConverterUnit("Millilitre", "mL", 0.001),
+        ConverterUnit("Litre", "L", 1.0),
+        ConverterUnit("Cubic metre", "m³", 1000.0),
+        ConverterUnit("US gallon", "US gal", 3.785411784),
+        ConverterUnit("US cup", "US cup", 0.2365882365)
+    )
+    else -> listOf(
+        ConverterUnit("Millisecond", "ms", 0.001),
+        ConverterUnit("Second", "s", 1.0),
+        ConverterUnit("Minute", "min", 60.0),
+        ConverterUnit("Hour", "h", 3600.0),
+        ConverterUnit("Day", "day", 86400.0)
+    )
+}
+
+private fun convertUnitValue(
+    value: Double,
+    category: String,
+    from: ConverterUnit,
+    to: ConverterUnit
+): Double {
+    if (category == "Temperature") {
+        val celsius = when (from.symbol) {
+            "°F" -> (value - 32.0) * 5.0 / 9.0
+            "K" -> value - 273.15
+            else -> value
+        }
+        return when (to.symbol) {
+            "°F" -> celsius * 9.0 / 5.0 + 32.0
+            "K" -> celsius + 273.15
+            else -> celsius
+        }
+    }
+    return value * from.factor / to.factor
+}
+
+@Composable
+private fun UnitConverterScreen(onBack: () -> Unit) {
+    val categories = listOf("Length", "Weight", "Temperature", "Speed", "Area", "Volume", "Time")
+    var category by remember { mutableStateOf("Length") }
+    var amount by remember { mutableStateOf("1") }
+    var fromUnit by remember { mutableStateOf("Metre") }
+    var toUnit by remember { mutableStateOf("Kilometre") }
+    var categoryMenu by remember { mutableStateOf(false) }
+
+    val units = converterUnits(category)
+    val from = units.firstOrNull { it.name == fromUnit } ?: units.first()
+    val to = units.firstOrNull { it.name == toUnit } ?: units.getOrElse(1) { units.first() }
+    val parsedAmount = amount.toDoubleOrNull()
+    val converted = parsedAmount?.let { convertUnitValue(it, category, from, to) }
+    val result = if (converted != null && converted.isFinite()) {
+        java.math.BigDecimal.valueOf(converted).stripTrailingZeros().toPlainString()
+    } else {
+        null
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Background)
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onBack) {
+                Text("‹  Back", color = Accent, fontSize = 16.sp)
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            Text("UNIT CONVERTER", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Text("Convert measurements", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text("Choose a category, enter a value and select the units.", color = SecondaryText, fontSize = 13.sp)
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Text("CATEGORY", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(8.dp))
+        Box {
+            OutlinedButton(
+                onClick = { categoryMenu = true },
+                modifier = Modifier.fillMaxWidth().height(52.dp)
+            ) {
+                Text(category, color = Color.White, modifier = Modifier.weight(1f))
+                Text("▾", color = Accent)
+            }
+            DropdownMenu(
+                expanded = categoryMenu,
+                onDismissRequest = { categoryMenu = false },
+                modifier = Modifier.background(SurfaceDark)
+            ) {
+                categories.forEach { item ->
+                    DropdownMenuItem(
+                        text = { Text(item, color = Color.White) },
+                        onClick = {
+                            category = item
+                            val newUnits = converterUnits(item)
+                            fromUnit = newUnits.first().name
+                            toUnit = newUnits.getOrElse(1) { newUnits.first() }.name
+                            categoryMenu = false
+                        }
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Text("VALUE", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { amount = it.filter { ch -> ch.isDigit() || ch == '.' || ch == '-' }.take(20) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("Enter a value") },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Accent,
+                        unfocusedBorderColor = SecondaryText,
+                        focusedLabelColor = Accent,
+                        cursorColor = Accent
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(18.dp))
+                Text("FROM", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(6.dp))
+                ConverterUnitPicker(
+                    selected = from,
+                    units = units,
+                    onSelected = { fromUnit = it.name }
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+                Text("TO", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(6.dp))
+                ConverterUnitPicker(
+                    selected = to,
+                    units = units,
+                    onSelected = { toUnit = it.name }
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1D3450)),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+                Text("RESULT", color = Color(0xFF80C8FF), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    result ?: "Enter a valid number",
+                    color = Color.White,
+                    fontSize = 29.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                if (result != null) {
+                    Text(to.symbol, color = Color(0xFF80C8FF), fontSize = 14.sp)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+        OutlinedButton(
+            onClick = {
+                val oldFrom = fromUnit
+                fromUnit = toUnit
+                toUnit = oldFrom
+            },
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            enabled = fromUnit != toUnit
+        ) {
+            Text("⇅  Swap units", color = Color.White)
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(
+            "Conversions use standard metric and imperial unit definitions. Temperature conversions use the exact Celsius, Fahrenheit and Kelvin relationships.",
+            color = SecondaryText,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+        )
+    }
+}
+
+@Composable
+private fun ConverterUnitPicker(
+    selected: ConverterUnit,
+    units: List<ConverterUnit>,
+    onSelected: (ConverterUnit) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth().height(50.dp)
+        ) {
+            Text(
+                selected.name + " (" + selected.symbol + ")",
+                color = Color.White,
+                modifier = Modifier.weight(1f),
+                maxLines = 1
+            )
+            Text("▾", color = Accent)
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(SurfaceDark)
+        ) {
+            units.forEach { unit ->
+                DropdownMenuItem(
+                    text = { Text(unit.name + " (" + unit.symbol + ")", color = Color.White) },
+                    onClick = {
+                        onSelected(unit)
+                        expanded = false
+                    }
+                )
+            }
+        }
     }
 }
