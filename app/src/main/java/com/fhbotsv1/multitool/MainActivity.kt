@@ -290,6 +290,7 @@ fun MultiToolApp() {
                 "Stopwatch" -> StopwatchScreen(onBack = { selectedTool = null })
                 "Timer" -> CountdownTimerScreen(onBack = { selectedTool = null })
                 "Unit Converter" -> UnitConverterScreen(onBack = { selectedTool = null })
+                "Flashlight" -> FlashlightScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
@@ -2816,5 +2817,225 @@ private fun ConverterUnitPicker(
                 )
             }
         }
+    }
+}
+
+
+@Composable
+private fun FlashlightScreen(onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val cameraManager = remember {
+        context.getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+    }
+    val cameraId = remember {
+        cameraManager.cameraIdList.firstOrNull { id ->
+            cameraManager.getCameraCharacteristics(id)
+                .get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        }
+    }
+    val flashAvailable = cameraId != null
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var mode by remember { mutableStateOf("OFF") }
+    var strobeHz by remember { mutableFloatStateOf(4f) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasCameraPermission = granted
+        if (!granted) errorMessage = "Camera permission is required to control the LED flash."
+    }
+
+    fun setFlash(enabled: Boolean) {
+        val id = cameraId ?: return
+        try {
+            cameraManager.setTorchMode(id, enabled)
+            errorMessage = null
+        } catch (exception: Exception) {
+            errorMessage = exception.localizedMessage ?: "Unable to control the flashlight."
+        }
+    }
+
+    LaunchedEffect(mode, hasCameraPermission, cameraId, strobeHz) {
+        if (!flashAvailable || !hasCameraPermission || mode == "OFF") {
+            if (hasCameraPermission) setFlash(false)
+        } else {
+            try {
+                when (mode) {
+                    "ON" -> setFlash(true)
+                    "STROBE" -> {
+                        val interval = (1000f / (strobeHz * 2f)).toLong().coerceAtLeast(25L)
+                        while (true) {
+                            setFlash(true)
+                            kotlinx.coroutines.delay(interval)
+                            setFlash(false)
+                            kotlinx.coroutines.delay(interval)
+                        }
+                    }
+                    "SOS" -> {
+                        val pattern = listOf(
+                            180L, 180L, 180L, 180L, 180L, 540L,
+                            540L, 180L, 540L, 180L, 540L, 540L,
+                            180L, 180L, 180L, 180L, 180L, 900L
+                        )
+                        while (true) {
+                            for (index in pattern.indices) {
+                                setFlash(index % 2 == 0)
+                                kotlinx.coroutines.delay(pattern[index])
+                            }
+                        }
+                    }
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } finally {
+                if (hasCameraPermission) setFlash(false)
+            }
+        }
+    }
+
+    DisposableEffect(cameraId, hasCameraPermission) {
+        onDispose {
+            if (cameraId != null && hasCameraPermission) {
+                runCatching { cameraManager.setTorchMode(cameraId, false) }
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Background)
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onBack) {
+                Text("‹  Back", color = Accent, fontSize = 16.sp)
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            Text("FLASHLIGHT", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(34.dp))
+        Box(
+            modifier = Modifier
+                .size(176.dp)
+                .background(
+                    if (mode == "ON") Color(0xFF344B2D) else SurfaceDark,
+                    RoundedCornerShape(88.dp)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(if (mode == "ON") "🔦" else "💡", fontSize = 76.sp)
+        }
+        Spacer(modifier = Modifier.height(18.dp))
+        Text(
+            when (mode) {
+                "ON" -> "Flashlight is ON"
+                "STROBE" -> "Strobe mode active"
+                "SOS" -> "SOS signal active"
+                else -> "Flashlight is OFF"
+            },
+            color = if (mode == "OFF") SecondaryText else Accent,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(modifier = Modifier.height(28.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Text("FLASHLIGHT CONTROL", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(14.dp))
+                Button(
+                    onClick = {
+                        if (!hasCameraPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
+                        else mode = if (mode == "ON") "OFF" else "ON"
+                    },
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (mode == "ON") Color(0xFF455A64) else Accent
+                    ),
+                    shape = RoundedCornerShape(15.dp)
+                ) {
+                    Text(
+                        if (mode == "ON") "Turn OFF" else "Turn ON",
+                        color = Color(0xFF101522),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            if (!hasCameraPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
+                            else mode = if (mode == "STROBE") "OFF" else "STROBE"
+                        },
+                        modifier = Modifier.weight(1f).height(50.dp)
+                    ) {
+                        Text(if (mode == "STROBE") "Stop Strobe" else "Strobe", color = Color.White)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            if (!hasCameraPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
+                            else mode = if (mode == "SOS") "OFF" else "SOS"
+                        },
+                        modifier = Modifier.weight(1f).height(50.dp)
+                    ) {
+                        Text(if (mode == "SOS") "Stop SOS" else "SOS", color = Color.White)
+                    }
+                }
+
+                if (mode == "STROBE") {
+                    Spacer(modifier = Modifier.height(18.dp))
+                    Text("Strobe speed: " + strobeHz.toInt() + " flashes/second", color = Color.White, fontSize = 13.sp)
+                    Slider(
+                        value = strobeHz,
+                        onValueChange = { strobeHz = it },
+                        valueRange = 1f..10f,
+                        steps = 8,
+                        colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+        if (!flashAvailable) {
+            Text("This device does not report an available camera LED flash.", color = Color(0xFFFFB74D), fontSize = 12.sp)
+        } else if (!hasCameraPermission) {
+            Text("Allow camera permission when prompted. MultiTool uses it only to control the LED flash; it does not capture photos or video.", color = SecondaryText, fontSize = 12.sp, lineHeight = 17.sp)
+        } else {
+            Text("LED flash detected. Strobe speed is adjustable from 1 to 10 flashes per second.", color = SecondaryText, fontSize = 12.sp)
+        }
+        errorMessage?.let {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(it, color = Color(0xFFFFB74D), fontSize = 12.sp)
+        }
+        Spacer(modifier = Modifier.height(18.dp))
+        Text(
+            "Avoid looking directly into the LED. Rapid flashing may trigger photosensitive reactions; use strobe and SOS carefully.",
+            color = SecondaryText,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+        )
     }
 }
