@@ -210,11 +210,11 @@ private fun DownloaderHome() {
                             isLoading = true
                             videoInfo = null
                             errorMessage = null
-                            statusMessage = "Connecting to the website and reading video information…"
+                            statusMessage = "Checking yt-dlp updates and connecting to the website…"
                             scope.launch {
                                 try {
                                     val result = withContext(Dispatchers.IO) {
-                                        YoutubeDL.init(appContext)
+                                        ensureYoutubeDLReady(appContext)
                                         val request = YoutubeDLRequest(submittedUrl).apply {
                                             addOption("--no-playlist")
                                             addOption("--no-warnings")
@@ -1087,7 +1087,7 @@ private suspend fun performQueuedDownload(context: android.content.Context, item
     val quality = runCatching { QualityMode.valueOf(item.qualityMode) }.getOrDefault(QualityMode.BEST_AVAILABLE)
     val codec = runCatching { OutputCodec.valueOf(item.outputCodec) }.getOrDefault(OutputCodec.ORIGINAL)
     return withContext(Dispatchers.IO) {
-        YoutubeDL.init(context); FFmpeg.getInstance().init(context)
+        ensureYoutubeDLReady(context); FFmpeg.getInstance().init(context)
         val outputDir = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir, "ytdlp-stage4").apply { mkdirs() }
         val before = outputDir.listFiles()?.map { it.name }?.toSet().orEmpty()
         val request = YoutubeDLRequest(item.url).apply {
@@ -1242,6 +1242,41 @@ private fun createDownloadForegroundInfo(context: Context, message: String, prog
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
         ForegroundInfo(DOWNLOAD_NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
     else ForegroundInfo(DOWNLOAD_NOTIFICATION_ID, notification)
+}
+
+private val YOUTUBE_DL_UPDATE_LOCK = Any()
+private const val YTDLP_UPDATE_PREFS = "ytdlp_update"
+private const val YTDLP_LAST_SUCCESSFUL_CHECK = "last_successful_check"
+private const val YTDLP_UPDATE_INTERVAL_MS = 24L * 60L * 60L * 1000L
+
+/**
+ * Initializes yt-dlp and checks the official nightly channel once every 24 hours.
+ * The library's updater replaces the bundled executable; no app reinstall is needed.
+ * Call this only from an IO/background thread.
+ */
+private fun ensureYoutubeDLReady(context: Context) {
+    synchronized(YOUTUBE_DL_UPDATE_LOCK) {
+        YoutubeDL.init(context)
+        val preferences = context.getSharedPreferences(YTDLP_UPDATE_PREFS, Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        val lastCheck = preferences.getLong(YTDLP_LAST_SUCCESSFUL_CHECK, 0L)
+        val shouldCheck = lastCheck == 0L || now < lastCheck || now - lastCheck >= YTDLP_UPDATE_INTERVAL_MS
+
+        if (shouldCheck) {
+            val updateStatus = YoutubeDL.getInstance().updateYoutubeDL(
+                context,
+                YoutubeDL.UpdateChannel.NIGHTLY
+            )
+            if (updateStatus != YoutubeDL.UpdateStatus.DONE &&
+                updateStatus != YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE
+            ) {
+                throw IllegalStateException(
+                    "yt-dlp could not be updated. Check your internet connection and try again."
+                )
+            }
+            preferences.edit().putLong(YTDLP_LAST_SUCCESSFUL_CHECK, now).apply()
+        }
+    }
 }
 
 private data class DownloadHistoryItem(
