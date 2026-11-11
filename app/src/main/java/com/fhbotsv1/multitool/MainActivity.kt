@@ -568,15 +568,74 @@ private fun CompassScreen(onBack: () -> Unit) {
     val sensorManager = remember {
         context.getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
     }
+    val locationManager = remember {
+        context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+    }
     val rotationSensor = remember {
         sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_ROTATION_VECTOR)
     }
-    var azimuth by remember { mutableFloatStateOf(0f) }
+
+    var magneticAzimuth by remember { mutableFloatStateOf(0f) }
+    var declination by remember { mutableFloatStateOf(0f) }
+    var hasTrueNorthCorrection by remember { mutableStateOf(false) }
     var sensorReady by remember { mutableStateOf(rotationSensor != null) }
+    var sensorAccuracy by remember { mutableStateOf("Waiting for sensor…") }
+    var hasLocationPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    fun updateDeclination() {
+        if (!hasLocationPermission) {
+            hasTrueNorthCorrection = false
+            return
+        }
+        try {
+            val location = try {
+                locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            } catch (_: SecurityException) {
+                null
+            } ?: try {
+                locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            } catch (_: SecurityException) {
+                null
+            }
+            if (location != null) {
+                val field = android.hardware.GeomagneticField(
+                    location.latitude.toFloat(),
+                    location.longitude.toFloat(),
+                    location.altitude.toFloat(),
+                    System.currentTimeMillis()
+                )
+                declination = field.declination
+                hasTrueNorthCorrection = true
+            } else {
+                hasTrueNorthCorrection = false
+            }
+        } catch (_: Exception) {
+            hasTrueNorthCorrection = false
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        hasLocationPermission =
+            permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        updateDeclination()
+    }
+
+    LaunchedEffect(hasLocationPermission) {
+        updateDeclination()
+    }
 
     DisposableEffect(rotationSensor) {
         if (rotationSensor == null) {
             sensorReady = false
+            sensorAccuracy = "Rotation-vector sensor unavailable"
             onDispose { }
         } else {
             val listener = object : android.hardware.SensorEventListener {
@@ -586,13 +645,28 @@ private fun CompassScreen(onBack: () -> Unit) {
                     android.hardware.SensorManager.getRotationMatrixFromVector(matrix, event.values)
                     android.hardware.SensorManager.getOrientation(matrix, orientation)
                     val degrees = Math.toDegrees(orientation[0].toDouble()).toFloat()
-                    azimuth = (degrees + 360f) % 360f
+                    magneticAzimuth = (degrees + 360f) % 360f
                     sensorReady = true
                 }
 
                 override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {
-                    if (accuracy == android.hardware.SensorManager.SENSOR_STATUS_UNRELIABLE) {
-                        sensorReady = false
+                    when (accuracy) {
+                        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> {
+                            sensorAccuracy = "Sensor accuracy: High"
+                            sensorReady = true
+                        }
+                        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM -> {
+                            sensorAccuracy = "Sensor accuracy: Medium"
+                            sensorReady = true
+                        }
+                        android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_LOW -> {
+                            sensorAccuracy = "Sensor accuracy: Low • Calibrate phone"
+                            sensorReady = true
+                        }
+                        android.hardware.SensorManager.SENSOR_STATUS_UNRELIABLE -> {
+                            sensorAccuracy = "Unreliable sensor • Move phone in a figure-eight"
+                            sensorReady = false
+                        }
                     }
                 }
             }
@@ -602,18 +676,21 @@ private fun CompassScreen(onBack: () -> Unit) {
                 android.hardware.SensorManager.SENSOR_DELAY_UI
             )
             sensorReady = registered
+            if (!registered) sensorAccuracy = "Could not start orientation sensor"
             onDispose { sensorManager.unregisterListener(listener) }
         }
     }
 
+    val trueAzimuth = (magneticAzimuth + if (hasTrueNorthCorrection) declination else 0f + 360f) % 360f
+    val heading = if (hasTrueNorthCorrection) trueAzimuth else magneticAzimuth
     val direction = when {
-        azimuth >= 337.5f || azimuth < 22.5f -> "N"
-        azimuth < 67.5f -> "NE"
-        azimuth < 112.5f -> "E"
-        azimuth < 157.5f -> "SE"
-        azimuth < 202.5f -> "S"
-        azimuth < 247.5f -> "SW"
-        azimuth < 292.5f -> "W"
+        heading >= 337.5f || heading < 22.5f -> "N"
+        heading < 67.5f -> "NE"
+        heading < 112.5f -> "E"
+        heading < 157.5f -> "SE"
+        heading < 202.5f -> "S"
+        heading < 247.5f -> "SW"
+        heading < 292.5f -> "W"
         else -> "NW"
     }
 
@@ -626,13 +703,13 @@ private fun CompassScreen(onBack: () -> Unit) {
             Spacer(modifier = Modifier.weight(1f))
             Text("DIGITAL COMPASS", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(12.dp))
         Text(
-            if (sensorReady) "Rotate your phone to find direction" else "Orientation sensor unavailable",
+            if (sensorReady) "Rotate your phone to find direction" else "Check sensor and calibrate",
             color = if (sensorReady) SecondaryText else Color(0xFFFFB74D),
             fontSize = 12.sp
         )
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(16.dp))
         Box(
             modifier = Modifier.fillMaxWidth().aspectRatio(1f),
             contentAlignment = Alignment.Center
@@ -657,7 +734,7 @@ private fun CompassScreen(onBack: () -> Unit) {
                         strokeWidth = if (i % 6 == 0) 2.5.dp.toPx() else 1.dp.toPx()
                     )
                 }
-                rotate(degrees = -azimuth, pivot = center) {
+                rotate(degrees = -heading, pivot = center) {
                     val needle = androidx.compose.ui.graphics.Path().apply {
                         moveTo(center.x, center.y - radius * 0.66f)
                         lineTo(center.x - radius * 0.12f, center.y + radius * 0.12f)
@@ -686,39 +763,45 @@ private fun CompassScreen(onBack: () -> Unit) {
                 Text("E", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
         }
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(if (sensorReady) direction else "--", color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Bold)
+        Text(if (sensorReady) heading.toInt().toString() + "°" else "---°", color = Accent, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
         Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            if (sensorReady) direction else "--",
-            color = Color.White,
-            fontSize = 42.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            if (sensorReady) "${azimuth.toInt()}°" else "---°",
-            color = Accent,
-            fontSize = 22.sp,
-            fontWeight = FontWeight.SemiBold
-        )
-        Spacer(modifier = Modifier.height(20.dp))
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = SurfaceDark),
             shape = RoundedCornerShape(16.dp)
         ) {
-            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-                Text("COMPASS HEADING", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(6.dp))
+            Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+                Text("HEADING REFERENCE", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 Text(
-                    if (sensorReady) "${azimuth.toInt()}°  •  $direction" else "Sensor not available",
+                    if (hasTrueNorthCorrection) "True north • declination " + String.format("%.1f°", declination)
+                    else "Magnetic north • true north correction unavailable",
                     color = Color.White,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(sensorAccuracy, color = SecondaryText, fontSize = 11.sp)
+                Text("Magnetic heading: " + magneticAzimuth.toInt().toString() + "°", color = SecondaryText, fontSize = 11.sp)
             }
+        }
+        if (!hasLocationPermission) {
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Enable location for true north", color = Accent)
+            }
+        } else if (!hasTrueNorthCorrection) {
+            Text("Waiting for a recent location to calculate true north.", color = SecondaryText, fontSize = 10.sp)
         }
         Spacer(modifier = Modifier.weight(1f))
         Text(
-            "Keep the phone flat and away from magnets or metal. Calibrate by moving it in a figure-eight if readings are unstable.",
+            "Calibration: move the phone slowly in a figure-eight several times. Keep it away from magnetic cases, speakers, metal and other electronics.",
             color = SecondaryText,
             fontSize = 11.sp,
             lineHeight = 16.sp
