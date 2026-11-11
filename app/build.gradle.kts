@@ -5,30 +5,28 @@ plugins {
 }
 
 android {
-    namespace = "com.fhbotsv1.ytdlpapp"
+    namespace = "com.fhbotsv1.multitool"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.fhbotsv1.ytdlpapp"
+        applicationId = "com.fhbotsv1.multitool"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.9.1"
+        versionCode = 1
+        versionName = "1.0"
 
-        ndk {
-            abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64"))
+        vectorDrawables {
+            useSupportLibrary = true
         }
     }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    packaging {
-        jniLibs { useLegacyPackaging = true }
     }
 }
 
@@ -48,12 +46,6 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
-
-    implementation(libs.youtubedlAndroid)
-    implementation(libs.youtubedlAndroidFfmpeg)
-    implementation(libs.coilCompose)
-    implementation(libs.androidx.work.runtime)
-    implementation(libs.androidx.compose.runtime.livedata)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
