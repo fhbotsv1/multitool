@@ -29,6 +29,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -4231,6 +4234,8 @@ private fun ARMeasureScreen(onBack: () -> Unit) {
             }
             arSession = session
             glView = gl
+            session.resume()
+            gl.onResume()
             status = "Move the phone slowly until ARCore detects a surface."
             cameraError = null
         } catch (e: com.google.ar.core.exceptions.UnavailableArcoreNotInstalledException) {
@@ -4299,7 +4304,7 @@ private fun ARMeasureScreen(onBack: () -> Unit) {
                 firstPoint = null
                 secondPoint = null
                 distanceMeters = null
-                renderer?.resetMeasurement()
+                renderer?.resetMeasurement(glView!!)
                 status = "Measurement cleared. Tap the first point."
             }) { Text("Reset measurement", color = Accent) }
             OutlinedButton(onClick = {
@@ -4436,9 +4441,11 @@ private class ARMeasureRenderer(
         }
     }
 
-    fun resetMeasurement() {
-        anchors.forEach { runCatching { it.detach() } }
-        anchors.clear()
+    fun resetMeasurement(view: android.opengl.GLSurfaceView) {
+        view.queueEvent {
+            anchors.forEach { runCatching { it.detach() } }
+            anchors.clear()
+        }
     }
 
     private fun createProgram(vertex: String, fragment: String): Int {
