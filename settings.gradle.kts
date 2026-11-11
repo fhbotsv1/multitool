@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "YTDLPDownloader"
+rootProject.name = "MultiTool"
 include(":app")
