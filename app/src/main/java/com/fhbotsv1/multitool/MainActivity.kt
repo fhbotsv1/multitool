@@ -4285,14 +4285,18 @@ private fun ARMeasureScreen(onBack: () -> Unit) {
                     Spacer(Modifier.height(6.dp))
                     Text("Requires an ARCore-compatible Android phone and Google Play Services for AR.", color = SecondaryText, fontSize = 11.sp)
                     Spacer(Modifier.height(12.dp))
-                    Button(
-                        onClick = { startAr() },
-                        modifier = Modifier.height(48.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Color.White)
+                    Box(
+                        modifier = Modifier
+                            .widthIn(min = 160.dp)
+                            .height(48.dp)
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(Accent)
+                            .clickable { startAr() },
+                        contentAlignment = Alignment.Center
                     ) {
                         Text(
                             if (hasCameraPermission) "START AR" else "GRANT CAMERA ACCESS",
-                            color = Color.White,
+                            color = Color(0xFF101522),
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold
                         )
