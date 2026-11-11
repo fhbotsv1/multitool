@@ -2,6 +2,7 @@
 package com.fhbotsv1.multitool
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
@@ -3719,13 +3720,22 @@ private fun ScreenTesterScreen(onBack: () -> Unit) {
 
 @Composable
 private fun ScreenRulerScreen(onBack: () -> Unit) {
+    val activity = androidx.compose.ui.platform.LocalContext.current as Activity
+    DisposableEffect(activity) {
+        val previousOrientation = activity.requestedOrientation
+        activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        onDispose {
+            activity.requestedOrientation = previousOrientation
+        }
+    }
+
     val density = androidx.compose.ui.platform.LocalDensity.current
     var unit by remember { mutableStateOf("cm") }
     var calibration by remember { mutableFloatStateOf(1f) }
     val scrollState = rememberScrollState()
     val pxPerMm = with(density) { 160f / 25.4f * density.density } * calibration
 
-    Column(Modifier.fillMaxSize().background(Background).padding(16.dp)) {
+    Column(Modifier.fillMaxSize().background(Background).verticalScroll(rememberScrollState()).padding(16.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("‹  Back", color = Accent) }
             Spacer(Modifier.weight(1f))
@@ -3751,7 +3761,7 @@ private fun ScreenRulerScreen(onBack: () -> Unit) {
             Modifier.fillMaxWidth().height(190.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFF5F2E9))
                 .horizontalScroll(scrollState)
         ) {
-            Canvas(Modifier.width(1200.dp).fillMaxHeight()) {
+            Canvas(Modifier.width(1600.dp).fillMaxHeight()) {
                 val step = pxPerMm
                 val rulerHeight = size.height
                 val totalTicks = (size.width / step).toInt()
