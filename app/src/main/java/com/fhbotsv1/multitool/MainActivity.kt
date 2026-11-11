@@ -29,8 +29,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.input.pointer.pointerInteropFilter
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.layout.*
@@ -4213,24 +4211,39 @@ private fun ARMeasureScreen(onBack: () -> Unit) {
             val gl = android.opengl.GLSurfaceView(context).apply {
                 setEGLContextClientVersion(2)
                 preserveEGLContextOnPause = true
-                val newRenderer = ARMeasureRenderer(session) { x, y, metres ->
-                    activity.runOnUiThread {
-                        val point = Offset(x * viewSize.width, y * viewSize.height)
-                        if (firstPoint == null || (firstPoint != null && secondPoint != null)) {
-                            firstPoint = point
-                            secondPoint = null
-                            distanceMeters = null
-                            status = "First point placed. Tap a second point on the detected surface."
-                        } else {
-                            secondPoint = point
-                            distanceMeters = metres
-                            status = "Two points measured. Tap again to start a new measurement."
+                val newRenderer = ARMeasureRenderer(
+                    session,
+                    onPointAdded = { x, y, metres ->
+                        activity.runOnUiThread {
+                            val point = Offset(x * viewSize.width, y * viewSize.height)
+                            if (firstPoint == null || secondPoint != null) {
+                                firstPoint = point
+                                secondPoint = null
+                                distanceMeters = null
+                                status = "First point placed. Tap a second point on the detected surface."
+                            } else {
+                                secondPoint = point
+                                distanceMeters = metres
+                                status = if (metres != null) "Measurement complete. Tap again to measure another distance."
+                                    else "Second point placed. Distance unavailable; try again."
+                            }
+                        }
+                    },
+                    onTapMiss = {
+                        activity.runOnUiThread {
+                            status = "No detected surface at that spot. Move the phone slowly, wait for tracking, then tap a visible floor or wall."
                         }
                     }
-                }
+                )
                 renderer = newRenderer
                 setRenderer(newRenderer)
                 renderMode = android.opengl.GLSurfaceView.RENDERMODE_CONTINUOUSLY
+                setOnTouchListener { _, event ->
+                    if (event.action == android.view.MotionEvent.ACTION_UP) {
+                        newRenderer.queueHitTest(this, event.x, event.y, width.toFloat().coerceAtLeast(1f), height.toFloat().coerceAtLeast(1f))
+                    }
+                    true
+                }
             }
             arSession = session
             glView = gl
@@ -4279,13 +4292,6 @@ private fun ARMeasureScreen(onBack: () -> Unit) {
             Box(
                 Modifier.fillMaxWidth().height(360.dp).clip(RoundedCornerShape(18.dp)).background(Color.Black)
                     .onSizeChanged { viewSize = androidx.compose.ui.geometry.Size(it.width.toFloat(), it.height.toFloat()) }
-                    .pointerInput(glView, viewSize) {
-                        detectTapGestures { tap ->
-                            val w = size.width.toFloat().coerceAtLeast(1f)
-                            val h = size.height.toFloat().coerceAtLeast(1f)
-                            renderer?.queueHitTest(glView!!, tap.x, tap.y, w, h)
-                        }
-                    }
             ) {
                 AndroidView(factory = { glView!! }, modifier = Modifier.fillMaxSize())
                 Canvas(Modifier.fillMaxSize()) {
@@ -4331,7 +4337,8 @@ private fun ARMeasureScreen(onBack: () -> Unit) {
 
 private class ARMeasureRenderer(
     private val session: com.google.ar.core.Session,
-    private val onPointAdded: (Float, Float, Float?) -> Unit
+    private val onPointAdded: (Float, Float, Float?) -> Unit,
+    private val onTapMiss: () -> Unit
 ) : android.opengl.GLSurfaceView.Renderer {
     @Volatile private var frame: com.google.ar.core.Frame? = null
     private val anchors = mutableListOf<com.google.ar.core.Anchor>()
@@ -4416,6 +4423,7 @@ private class ARMeasureRenderer(
                         trackable.trackingState == com.google.ar.core.TrackingState.TRACKING &&
                         trackable.isPoseInPolygon(result.hitPose)
                 } ?: run {
+                    android.os.Handler(android.os.Looper.getMainLooper()).post { onTapMiss() }
                     return@queueEvent
                 }
                 val anchor = hit.createAnchor()
@@ -4436,7 +4444,7 @@ private class ARMeasureRenderer(
                     onPointAdded((x / width).coerceIn(0f, 1f), (y / height).coerceIn(0f, 1f), distance)
                 }
             } catch (_: Exception) {
-                // Ignore taps that do not hit a tracked plane.
+                android.os.Handler(android.os.Looper.getMainLooper()).post { onTapMiss() }
             }
         }
     }
