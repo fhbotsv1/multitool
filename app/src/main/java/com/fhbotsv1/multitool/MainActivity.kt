@@ -4300,7 +4300,7 @@ private fun ARMeasureScreen(onBack: () -> Unit) {
                         Text(
                             if (hasCameraPermission) "START AR" else "GRANT CAMERA ACCESS",
                             color = Color(0xFF101522),
-                            fontSize = 13.sp,
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
