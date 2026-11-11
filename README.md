@@ -69,6 +69,12 @@ A native Android video downloader built with Kotlin and Jetpack Compose, using y
 - [x] If conversion fails, preserve and save the original download instead
 - [ ] Verify `libx265` availability and conversion behavior on target devices
 
+**Stage 9.1 — yt-dlp engine updates**
+- [x] Initialize the yt-dlp engine before use
+- [x] Check the official yt-dlp nightly channel before extraction/downloads, at most once every 24 hours
+- [x] Save the last successful update check locally to avoid unnecessary network requests
+- [x] Stop the operation with a clear error if the engine update fails, rather than silently continuing with a stale binary
+
 **Stage 9 — Queue controls**
 - [x] Pause and resume the sequential queue, including stopping the active yt-dlp process
 - [x] Cancel the current yt-dlp item while allowing the remaining queue to continue
