@@ -4290,9 +4290,9 @@ private fun ARMeasureScreen(onBack: () -> Unit) {
                     Spacer(Modifier.height(12.dp))
                     Box(
                         modifier = Modifier
-                            .widthIn(min = 160.dp)
-                            .height(48.dp)
-                            .clip(RoundedCornerShape(24.dp))
+                            .fillMaxWidth()
+                            .height(52.dp)
+                            .clip(RoundedCornerShape(26.dp))
                             .background(Accent)
                             .clickable { startAr() },
                         contentAlignment = Alignment.Center
