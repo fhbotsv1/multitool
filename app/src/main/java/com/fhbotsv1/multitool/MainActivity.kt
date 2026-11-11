@@ -303,6 +303,7 @@ fun MultiToolApp() {
                 "Screen Tester" -> ScreenTesterScreen(onBack = { selectedTool = null })
                 "Ruler" -> ScreenRulerScreen(onBack = { selectedTool = null })
                 "Protractor" -> ProtractorScreen(onBack = { selectedTool = null })
+                "AR Measure" -> ARMeasureScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
@@ -4133,3 +4134,326 @@ private fun ProtractorScreen(onBack: () -> Unit) {
     }
 }
 
+
+
+@Composable
+private fun ARMeasureScreen(onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val activity = context as Activity
+    val lifecycleOwner = context as androidx.lifecycle.LifecycleOwner
+    var hasCameraPermission by remember {
+        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        hasCameraPermission = it
+    }
+    var glView by remember { mutableStateOf<android.opengl.GLSurfaceView?>(null) }
+    var renderer by remember { mutableStateOf<ARMeasureRenderer?>(null) }
+    var arSession by remember { mutableStateOf<com.google.ar.core.Session?>(null) }
+    var status by remember { mutableStateOf("Tap Start AR to initialise plane detection.") }
+    var cameraError by remember { mutableStateOf<String?>(null) }
+    var firstPoint by remember { mutableStateOf<Offset?>(null) }
+    var secondPoint by remember { mutableStateOf<Offset?>(null) }
+    var distanceMeters by remember { mutableStateOf<Float?>(null) }
+    var viewSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
+    var installRequested by remember { mutableStateOf(false) }
+
+    fun stopAr() {
+        runCatching { glView?.onPause() }
+        runCatching { arSession?.pause() }
+        runCatching { arSession?.close() }
+        glView = null
+        renderer = null
+        arSession = null
+    }
+
+    DisposableEffect(lifecycleOwner, arSession, glView) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
+                    runCatching { arSession?.resume() }
+                    runCatching { glView?.onResume() }
+                }
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> {
+                    runCatching { glView?.onPause() }
+                    runCatching { arSession?.pause() }
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            stopAr()
+        }
+    }
+
+    fun startAr() {
+        if (!hasCameraPermission) {
+            permissionLauncher.launch(Manifest.permission.CAMERA)
+            return
+        }
+        try {
+            val installStatus = com.google.ar.core.ArCoreApk.getInstance()
+                .requestInstall(activity, !installRequested)
+            if (installStatus == com.google.ar.core.ArCoreApk.InstallStatus.INSTALL_REQUESTED) {
+                installRequested = true
+                status = "Install or update Google Play Services for AR, then open AR Measure again."
+                return
+            }
+            val session = com.google.ar.core.Session(context)
+            val config = com.google.ar.core.Config(session).apply {
+                planeFindingMode = com.google.ar.core.Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
+                updateMode = com.google.ar.core.Config.UpdateMode.LATEST_CAMERA_IMAGE
+            }
+            session.configure(config)
+            val gl = android.opengl.GLSurfaceView(context).apply {
+                setEGLContextClientVersion(2)
+                preserveEGLContextOnPause = true
+                val newRenderer = ARMeasureRenderer(session) { x, y, metres ->
+                    activity.runOnUiThread {
+                        val point = Offset(x * viewSize.width, y * viewSize.height)
+                        if (firstPoint == null || (firstPoint != null && secondPoint != null)) {
+                            firstPoint = point
+                            secondPoint = null
+                            distanceMeters = null
+                            status = "First point placed. Tap a second point on the detected surface."
+                        } else {
+                            secondPoint = point
+                            distanceMeters = metres
+                            status = "Two points measured. Tap again to start a new measurement."
+                        }
+                    }
+                }
+                renderer = newRenderer
+                setRenderer(newRenderer)
+                renderMode = android.opengl.GLSurfaceView.RENDERMODE_CONTINUOUSLY
+            }
+            arSession = session
+            glView = gl
+            status = "Move the phone slowly until ARCore detects a surface."
+            cameraError = null
+        } catch (e: com.google.ar.core.exceptions.UnavailableArcoreNotInstalledException) {
+            cameraError = "Google Play Services for AR is not installed. Install it from Play Store."
+        } catch (e: com.google.ar.core.exceptions.UnavailableApkTooOldException) {
+            cameraError = "Update Google Play Services for AR."
+        } catch (e: com.google.ar.core.exceptions.UnavailableSdkTooOldException) {
+            cameraError = "This ARCore SDK is too old for the installed AR service."
+        } catch (e: com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException) {
+            cameraError = "This phone does not support ARCore."
+        } catch (e: Exception) {
+            cameraError = e.localizedMessage ?: "Unable to start AR measurement."
+        }
+    }
+
+    Column(
+        Modifier.fillMaxSize().background(Background).verticalScroll(rememberScrollState()).padding(16.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹  Back", color = Accent) }
+            Spacer(Modifier.weight(1f))
+            Text("AR MEASURE", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("Measure real-world distance", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+        Text("ARCore detects surfaces and measures between two points.", color = SecondaryText, fontSize = 12.sp)
+        Spacer(Modifier.height(12.dp))
+
+        if (glView == null) {
+            Card(Modifier.fillMaxWidth().height(210.dp), colors = CardDefaults.cardColors(containerColor = SurfaceDark), shape = RoundedCornerShape(18.dp)) {
+                Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("📷", fontSize = 38.sp)
+                    Spacer(Modifier.height(10.dp))
+                    Text("Camera-based AR measurement", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    Text("Requires an ARCore-compatible Android phone and Google Play Services for AR.", color = SecondaryText, fontSize = 11.sp)
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = { startAr() }) { Text(if (hasCameraPermission) "Start AR" else "Grant camera access") }
+                }
+            }
+        } else {
+            Box(
+                Modifier.fillMaxWidth().height(360.dp).clip(RoundedCornerShape(18.dp)).background(Color.Black)
+                    .onSizeChanged { viewSize = androidx.compose.ui.geometry.Size(it.width.toFloat(), it.height.toFloat()) }
+                    .pointerInput(glView, viewSize) {
+                        detectTapGestures { tap ->
+                            val w = size.width.toFloat().coerceAtLeast(1f)
+                            val h = size.height.toFloat().coerceAtLeast(1f)
+                            renderer?.queueHitTest(glView!!, tap.x, tap.y, w, h)
+                        }
+                    }
+            ) {
+                AndroidView(factory = { glView!! }, modifier = Modifier.fillMaxSize())
+                Canvas(Modifier.fillMaxSize()) {
+                    val p1 = firstPoint
+                    val p2 = secondPoint
+                    if (p1 != null && p2 != null) drawLine(Color(0xFFFF5252), p1, p2, 3.dp.toPx())
+                    listOfNotNull(p1, p2).forEach {
+                        drawCircle(Color(0xFFFF5252), 9.dp.toPx(), it)
+                        drawCircle(Color.White, 3.dp.toPx(), it)
+                    }
+                }
+                Text("Tap two points on a detected surface", Modifier.align(Alignment.TopCenter).padding(10.dp).background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp), color = Color.White, fontSize = 11.sp)
+            }
+            Spacer(Modifier.height(10.dp))
+            TextButton(onClick = {
+                firstPoint = null
+                secondPoint = null
+                distanceMeters = null
+                renderer?.resetMeasurement()
+                status = "Measurement cleared. Tap the first point."
+            }) { Text("Reset measurement", color = Accent) }
+            OutlinedButton(onClick = {
+                stopAr()
+                status = "AR session stopped."
+            }, modifier = Modifier.fillMaxWidth()) { Text("Stop AR", color = Color.White) }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = SurfaceDark), shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                Text("MEASUREMENT", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Text(distanceMeters?.let { "%.2f m  ·  %.1f cm".format(it, it * 100f) } ?: "—", color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(5.dp))
+                Text(status, color = SecondaryText, fontSize = 12.sp, lineHeight = 17.sp)
+                cameraError?.let { Spacer(Modifier.height(6.dp)); Text(it, color = Color(0xFFFFB74D), fontSize = 12.sp) }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("How to use: start AR, slowly move the phone to scan the floor, wall or another textured surface. Tap the first point, then the second point. Measurements are estimates and depend on lighting, surface texture and tracking quality.", color = SecondaryText, fontSize = 11.sp, lineHeight = 16.sp)
+    }
+}
+
+private class ARMeasureRenderer(
+    private val session: com.google.ar.core.Session,
+    private val onPointAdded: (Float, Float, Float?) -> Unit
+) : android.opengl.GLSurfaceView.Renderer {
+    @Volatile private var frame: com.google.ar.core.Frame? = null
+    private val anchors = mutableListOf<com.google.ar.core.Anchor>()
+    private var textureId = 0
+    private var program = 0
+    private var positionHandle = 0
+    private var texCoordHandle = 0
+    private var textureHandle = 0
+    private val vertices = floatArrayOf(-1f,-1f, 1f,-1f, -1f,1f, 1f,1f)
+    private val uvs = floatArrayOf(0f,0f, 1f,0f, 0f,1f, 1f,1f)
+    private val vertexBuffer = java.nio.ByteBuffer.allocateDirect(vertices.size * 4).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer().apply { put(vertices); position(0) }
+    private val uvBuffer = java.nio.ByteBuffer.allocateDirect(uvs.size * 4).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer().apply { put(uvs); position(0) }
+
+    override fun onSurfaceCreated(gl: javax.microedition.khronos.opengles.GL10?, config: javax.microedition.khronos.egl.EGLConfig?) {
+        val textures = IntArray(1)
+        android.opengl.GLES20.glGenTextures(1, textures, 0)
+        textureId = textures[0]
+        android.opengl.GLES20.glBindTexture(android.opengl.GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
+        android.opengl.GLES20.glTexParameteri(android.opengl.GLES11Ext.GL_TEXTURE_EXTERNAL_OES, android.opengl.GLES20.GL_TEXTURE_MIN_FILTER, android.opengl.GLES20.GL_LINEAR)
+        android.opengl.GLES20.glTexParameteri(android.opengl.GLES11Ext.GL_TEXTURE_EXTERNAL_OES, android.opengl.GLES20.GL_TEXTURE_MAG_FILTER, android.opengl.GLES20.GL_LINEAR)
+        android.opengl.GLES20.glTexParameteri(android.opengl.GLES11Ext.GL_TEXTURE_EXTERNAL_OES, android.opengl.GLES20.GL_TEXTURE_WRAP_S, android.opengl.GLES20.GL_CLAMP_TO_EDGE)
+        android.opengl.GLES20.glTexParameteri(android.opengl.GLES11Ext.GL_TEXTURE_EXTERNAL_OES, android.opengl.GLES20.GL_TEXTURE_WRAP_T, android.opengl.GLES20.GL_CLAMP_TO_EDGE)
+        session.setCameraTextureName(textureId)
+        val vertexShader = """
+            attribute vec4 a_Position;
+            attribute vec2 a_TexCoord;
+            varying vec2 v_TexCoord;
+            void main() { gl_Position = a_Position; v_TexCoord = a_TexCoord; }
+        """
+        val fragmentShader = """
+            #extension GL_OES_EGL_image_external : require
+            precision mediump float;
+            uniform samplerExternalOES u_Texture;
+            varying vec2 v_TexCoord;
+            void main() { gl_FragColor = texture2D(u_Texture, v_TexCoord); }
+        """
+        program = createProgram(vertexShader, fragmentShader)
+        positionHandle = android.opengl.GLES20.glGetAttribLocation(program, "a_Position")
+        texCoordHandle = android.opengl.GLES20.glGetAttribLocation(program, "a_TexCoord")
+        textureHandle = android.opengl.GLES20.glGetUniformLocation(program, "u_Texture")
+    }
+
+    override fun onSurfaceChanged(gl: javax.microedition.khronos.opengles.GL10?, width: Int, height: Int) {
+        android.opengl.GLES20.glViewport(0, 0, width, height)
+        session.setDisplayGeometry(android.view.Surface.ROTATION_0, width, height)
+    }
+
+    override fun onDrawFrame(gl: javax.microedition.khronos.opengles.GL10?) {
+        try {
+            val current = session.update()
+            frame = current
+            android.opengl.GLES20.glClear(android.opengl.GLES20.GL_COLOR_BUFFER_BIT or android.opengl.GLES20.GL_DEPTH_BUFFER_BIT)
+            android.opengl.GLES20.glUseProgram(program)
+            val transformed = java.nio.ByteBuffer.allocateDirect(uvs.size * 4).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer()
+            current.transformDisplayUvCoords(uvBuffer, transformed)
+            vertexBuffer.position(0)
+            transformed.position(0)
+            android.opengl.GLES20.glEnableVertexAttribArray(positionHandle)
+            android.opengl.GLES20.glVertexAttribPointer(positionHandle, 2, android.opengl.GLES20.GL_FLOAT, false, 0, vertexBuffer)
+            android.opengl.GLES20.glEnableVertexAttribArray(texCoordHandle)
+            android.opengl.GLES20.glVertexAttribPointer(texCoordHandle, 2, android.opengl.GLES20.GL_FLOAT, false, 0, transformed)
+            android.opengl.GLES20.glActiveTexture(android.opengl.GLES20.GL_TEXTURE0)
+            android.opengl.GLES20.glBindTexture(android.opengl.GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
+            android.opengl.GLES20.glUniform1i(textureHandle, 0)
+            android.opengl.GLES20.glDrawArrays(android.opengl.GLES20.GL_TRIANGLE_STRIP, 0, 4)
+            android.opengl.GLES20.glDisableVertexAttribArray(positionHandle)
+            android.opengl.GLES20.glDisableVertexAttribArray(texCoordHandle)
+        } catch (_: com.google.ar.core.exceptions.CameraNotAvailableException) {
+            // The activity may be transitioning between foreground and background.
+        } catch (_: Exception) {
+            // Wait for the next camera frame.
+        }
+    }
+
+        fun queueHitTest(view: android.opengl.GLSurfaceView, x: Float, y: Float, width: Float, height: Float) {
+        view.queueEvent {
+            val current = frame ?: return@queueEvent
+            try {
+                val hit = current.hitTest(x, y).firstOrNull { result ->
+                    val trackable = result.trackable
+                    trackable is com.google.ar.core.Plane &&
+                        trackable.trackingState == com.google.ar.core.TrackingState.TRACKING &&
+                        trackable.isPoseInPolygon(result.hitPose)
+                } ?: run {
+                    return@queueEvent
+                }
+                val anchor = hit.createAnchor()
+                if (anchors.size >= 2) {
+                    anchors.forEach { runCatching { it.detach() } }
+                    anchors.clear()
+                }
+                anchors.add(anchor)
+                val distance = if (anchors.size == 2) {
+                    val a = anchors[0].pose
+                    val b = anchors[1].pose
+                    val dx = a.tx() - b.tx()
+                    val dy = a.ty() - b.ty()
+                    val dz = a.tz() - b.tz()
+                    kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
+                } else null
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    onPointAdded((x / width).coerceIn(0f, 1f), (y / height).coerceIn(0f, 1f), distance)
+                }
+            } catch (_: Exception) {
+                // Ignore taps that do not hit a tracked plane.
+            }
+        }
+    }
+
+    fun resetMeasurement() {
+        anchors.forEach { runCatching { it.detach() } }
+        anchors.clear()
+    }
+
+    private fun createProgram(vertex: String, fragment: String): Int {
+        fun compile(type: Int, source: String): Int {
+            val shader = android.opengl.GLES20.glCreateShader(type)
+            android.opengl.GLES20.glShaderSource(shader, source)
+            android.opengl.GLES20.glCompileShader(shader)
+            return shader
+        }
+        val vs = compile(android.opengl.GLES20.GL_VERTEX_SHADER, vertex)
+        val fs = compile(android.opengl.GLES20.GL_FRAGMENT_SHADER, fragment)
+        return android.opengl.GLES20.glCreateProgram().also {
+            android.opengl.GLES20.glAttachShader(it, vs)
+            android.opengl.GLES20.glAttachShader(it, fs)
+            android.opengl.GLES20.glLinkProgram(it)
+        }
+    }
+}
