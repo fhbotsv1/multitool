@@ -275,6 +275,7 @@ fun MultiToolApp() {
                 "Magnetic Detector" -> MagneticFieldScreen(onBack = { selectedTool = null })
                 "Metal Detector" -> MetalDetectorScreen(onBack = { selectedTool = null })
                 "Light Meter" -> LightMeterScreen(onBack = { selectedTool = null })
+                "Sound Meter" -> SoundMeterScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
@@ -1241,6 +1242,241 @@ private fun MetalDetectorScreen(onBack: () -> Unit) {
         Spacer(modifier = Modifier.weight(1f))
         Text(
             "Calibrate away from metal, then slowly sweep the phone near the object. This detects magnetic disturbances, especially from ferromagnetic metals such as iron and steel. It cannot reliably detect non-magnetic metals such as aluminium, copper or gold. Remove magnetic phone cases and accessories for best results.",
+            color = SecondaryText,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+        )
+    }
+}
+
+
+@Composable
+private fun SoundMeterScreen(onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var permission by remember {
+        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+    }
+    var measuring by remember { mutableStateOf(false) }
+    var db by remember { mutableFloatStateOf(0f) }
+    var minDb by remember { mutableFloatStateOf(Float.MAX_VALUE) }
+    var maxDb by remember { mutableFloatStateOf(0f) }
+    var avgDb by remember { mutableFloatStateOf(0f) }
+    var count by remember { mutableIntStateOf(0) }
+    var status by remember { mutableStateOf("Microphone not started") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        permission = granted
+        if (granted) {
+            measuring = true
+            status = "Starting microphone…"
+        } else status = "Microphone permission denied"
+    }
+
+    DisposableEffect(permission, measuring) {
+        if (!permission || !measuring) {
+            onDispose { }
+        } else {
+            val running = java.util.concurrent.atomic.AtomicBoolean(true)
+            val thread = Thread {
+                var recorder: android.media.AudioRecord? = null
+                try {
+                    val rate = 44100
+                    val bufferSize = android.media.AudioRecord.getMinBufferSize(
+                        rate,
+                        android.media.AudioFormat.CHANNEL_IN_MONO,
+                        android.media.AudioFormat.ENCODING_PCM_16BIT
+                    )
+                    if (bufferSize <= 0) {
+                        error = "Audio recording is not supported on this device."
+                        measuring = false
+                        return@Thread
+                    }
+                    val audio = android.media.AudioRecord(
+                        android.media.MediaRecorder.AudioSource.MIC,
+                        rate,
+                        android.media.AudioFormat.CHANNEL_IN_MONO,
+                        android.media.AudioFormat.ENCODING_PCM_16BIT,
+                        maxOf(bufferSize * 2, 4096)
+                    )
+                    recorder = audio
+                    if (audio.state != android.media.AudioRecord.STATE_INITIALIZED) {
+                        error = "Could not initialize microphone."
+                        measuring = false
+                        return@Thread
+                    }
+                    audio.startRecording()
+                    status = "Measuring live sound"
+                    val samples = ShortArray(2048)
+                    var smooth = 0f
+                    var first = true
+                    var low = Float.MAX_VALUE
+                    var high = 0f
+                    var total = 0f
+                    var n = 0
+                    while (running.get()) {
+                        val read = audio.read(samples, 0, samples.size)
+                        if (read > 0) {
+                            var squares = 0.0
+                            for (i in 0 until read) {
+                                val sample = samples[i].toDouble()
+                                squares += sample * sample
+                            }
+                            val rms = kotlin.math.sqrt(squares / read)
+                            val value = if (rms > 0.0) {
+                                (90.0 + 20.0 * kotlin.math.log10(rms / 32768.0)).toFloat().coerceIn(0f, 120f)
+                            } else 0f
+                            if (first) {
+                                smooth = value
+                                first = false
+                            } else smooth += (value - smooth) * 0.25f
+                            low = minOf(low, smooth)
+                            high = maxOf(high, smooth)
+                            total += smooth
+                            n++
+                            db = smooth
+                            minDb = low
+                            maxDb = high
+                            avgDb = total / n
+                            count = n
+                        } else if (read < 0) {
+                            error = "Microphone read error ($read)."
+                            measuring = false
+                            break
+                        }
+                    }
+                } catch (e: SecurityException) {
+                    error = "Microphone permission is required."
+                    measuring = false
+                } catch (e: Exception) {
+                    error = "Audio error: " + (e.message ?: "unknown error")
+                    measuring = false
+                } finally {
+                    try {
+                        if (recorder?.recordingState == android.media.AudioRecord.RECORDSTATE_RECORDING) recorder?.stop()
+                    } catch (_: Exception) { }
+                    try { recorder?.release() } catch (_: Exception) { }
+                }
+            }
+            thread.name = "MultiToolSoundMeter"
+            thread.isDaemon = true
+            thread.start()
+            onDispose {
+                running.set(false)
+                try { thread.join(300) } catch (_: InterruptedException) { thread.interrupt() }
+            }
+        }
+    }
+
+    val label = when {
+        db < 30f -> "Very quiet"
+        db < 40f -> "Quiet"
+        db < 60f -> "Moderate"
+        db < 75f -> "Busy / loud"
+        db < 90f -> "Very loud"
+        else -> "Extremely loud"
+    }
+    val levelColor = when {
+        db < 60f -> Color(0xFF81C784)
+        db < 85f -> Color(0xFFFFB74D)
+        else -> Color(0xFFFF5252)
+    }
+    val progress = ((db - 20f) / 100f).coerceIn(0f, 1f)
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Background).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹  Back", color = Accent, fontSize = 16.sp) }
+            Spacer(modifier = Modifier.weight(1f))
+            Text("SOUND METER", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.height(22.dp))
+
+        if (!permission) {
+            Text("Microphone permission needed", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("The microphone is used only to calculate the live sound level. Audio is not saved.", color = SecondaryText, fontSize = 12.sp, lineHeight = 18.sp)
+            Spacer(modifier = Modifier.height(20.dp))
+            Button(
+                onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Accent)
+            ) {
+                Text("Grant microphone permission", color = Color(0xFF101522), fontWeight = FontWeight.Bold)
+            }
+        } else {
+            Text("ESTIMATED SOUND LEVEL", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(if (count > 0) String.format("%.1f", db) else "—", color = Color.White, fontSize = 62.sp, fontWeight = FontWeight.Bold)
+            Text("dB • approximate", color = Accent, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(if (measuring && count > 0) label else status, color = if (measuring) levelColor else SecondaryText, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+
+            Spacer(modifier = Modifier.height(22.dp))
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = SurfaceDark), shape = RoundedCornerShape(18.dp)) {
+                Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+                    Text("LIVE LEVEL", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Box(modifier = Modifier.fillMaxWidth().height(14.dp).clip(RoundedCornerShape(50)).background(Color(0xFF303B4D))) {
+                        Box(modifier = Modifier.fillMaxWidth(progress).fillMaxHeight().background(levelColor, RoundedCornerShape(50)))
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("20 dB", color = SecondaryText, fontSize = 10.sp)
+                        Text("120 dB", color = SecondaryText, fontSize = 10.sp)
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(14.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    "MIN" to if (minDb == Float.MAX_VALUE) "—" else String.format("%.1f", minDb),
+                    "AVG" to if (count == 0) "—" else String.format("%.1f", avgDb),
+                    "MAX" to if (count == 0) "—" else String.format("%.1f", maxDb)
+                ).forEach { item ->
+                    Card(modifier = Modifier.weight(1f), colors = CardDefaults.cardColors(containerColor = SurfaceDark), shape = RoundedCornerShape(14.dp)) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(item.first, color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.height(5.dp))
+                            Text(item.second, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                            Text("dB", color = SecondaryText, fontSize = 10.sp)
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = {
+                        error = null
+                        measuring = !measuring
+                        status = if (measuring) "Starting microphone…" else "Paused"
+                    },
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent)
+                ) {
+                    Text(if (measuring) "Pause" else "Resume", color = Color(0xFF101522), fontWeight = FontWeight.Bold)
+                }
+                OutlinedButton(
+                    onClick = {
+                        minDb = Float.MAX_VALUE
+                        maxDb = 0f
+                        avgDb = 0f
+                        count = 0
+                    },
+                    modifier = Modifier.weight(1f).height(48.dp)
+                ) { Text("Reset stats", color = Color.White) }
+            }
+            if (error != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(error ?: "", color = Color(0xFFFF8A80), fontSize = 11.sp)
+            }
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            "Approximate only, not a calibrated sound-pressure meter. Microphone sensitivity, automatic gain control, phone case and distance affect readings. Do not use for workplace safety or hearing-protection decisions. No audio is recorded or stored.",
             color = SecondaryText,
             fontSize = 11.sp,
             lineHeight = 16.sp
