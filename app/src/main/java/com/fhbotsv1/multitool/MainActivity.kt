@@ -282,6 +282,7 @@ fun MultiToolApp() {
                 "Barometer" -> BarometerScreen(onBack = { selectedTool = null })
                 "Vibration Meter" -> VibrationMeterScreen(onBack = { selectedTool = null })
                 "Stopwatch" -> StopwatchScreen(onBack = { selectedTool = null })
+                "Timer" -> CountdownTimerScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
                 containerColor = SurfaceDark,
@@ -2291,6 +2292,204 @@ private fun StopwatchScreen(onBack: () -> Unit) {
             color = SecondaryText,
             fontSize = 11.sp,
             lineHeight = 16.sp
+        )
+    }
+}
+
+
+@Composable
+private fun CountdownTimerScreen(onBack: () -> Unit) {
+    var hoursText by remember { mutableStateOf("00") }
+    var minutesText by remember { mutableStateOf("05") }
+    var secondsText by remember { mutableStateOf("00") }
+    var remainingMillis by remember { mutableLongStateOf(300_000L) }
+    var deadline by remember { mutableLongStateOf(0L) }
+    var isRunning by remember { mutableStateOf(false) }
+    var showFinished by remember { mutableStateOf(false) }
+
+    fun formatRemaining(value: Long): String {
+        val totalSeconds = (value.coerceAtLeast(0L) + 999L) / 1000L
+        val hours = totalSeconds / 3600L
+        val minutes = (totalSeconds % 3600L) / 60L
+        val seconds = totalSeconds % 60L
+        return String.format("%02d:%02d:%02d", hours, minutes, seconds)
+    }
+
+    fun readInputMillis(): Long? {
+        val hours = hoursText.toLongOrNull() ?: return null
+        val minutes = minutesText.toLongOrNull() ?: return null
+        val seconds = secondsText.toLongOrNull() ?: return null
+        if (hours < 0L || minutes !in 0L..59L || seconds !in 0L..59L) return null
+        if (hours > 99L) return null
+        val total = (hours * 3600L + minutes * 60L + seconds) * 1000L
+        return total.takeIf { it > 0L }
+    }
+
+    LaunchedEffect(isRunning) {
+        if (isRunning) {
+            while (true) {
+                val left = deadline - SystemClock.elapsedRealtime()
+                if (left <= 0L) {
+                    remainingMillis = 0L
+                    isRunning = false
+                    showFinished = true
+                    break
+                }
+                remainingMillis = left
+                kotlinx.coroutines.delay(100L)
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Background)
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onBack) {
+                Text("‹  Back", color = Accent, fontSize = 16.sp)
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            Text("COUNTDOWN TIMER", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(34.dp))
+        Text("TIME REMAINING", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            formatRemaining(remainingMillis),
+            color = if (remainingMillis == 0L) Color(0xFFFFB74D) else Color.White,
+            fontSize = 48.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+        Text(
+            if (isRunning) "Counting down…" else if (remainingMillis == 0L) "Finished" else "Ready",
+            color = if (isRunning) Accent else SecondaryText,
+            fontSize = 13.sp
+        )
+
+        Spacer(modifier = Modifier.height(30.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Text("SET DURATION", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    @Composable
+                    fun TimeInput(label: String, value: String, onValueChange: (String) -> Unit) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            OutlinedTextField(
+                                value = value,
+                                onValueChange = { input ->
+                                    onValueChange(input.filter { it.isDigit() }.take(2))
+                                },
+                                enabled = !isRunning,
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                label = { Text(label) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    disabledTextColor = SecondaryText,
+                                    focusedBorderColor = Accent,
+                                    unfocusedBorderColor = SecondaryText,
+                                    focusedLabelColor = Accent,
+                                    unfocusedLabelColor = SecondaryText,
+                                    cursorColor = Accent
+                                )
+                            )
+                        }
+                    }
+                    TimeInput("Hours", hoursText) { hoursText = it }
+                    TimeInput("Minutes", minutesText) { minutesText = it }
+                    TimeInput("Seconds", secondsText) { secondsText = it }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Minutes and seconds must be between 00 and 59.", color = SecondaryText, fontSize = 11.sp)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(22.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Button(
+                onClick = {
+                    if (isRunning) {
+                        remainingMillis = (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+                        isRunning = false
+                    } else {
+                        val duration = if (remainingMillis > 0L) remainingMillis else readInputMillis()
+                        if (duration != null && duration > 0L) {
+                            remainingMillis = duration
+                            deadline = SystemClock.elapsedRealtime() + duration
+                            showFinished = false
+                            isRunning = true
+                        }
+                    }
+                },
+                enabled = isRunning || remainingMillis > 0L || readInputMillis() != null,
+                modifier = Modifier.weight(1f).height(54.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text(
+                    if (isRunning) "Pause" else if (remainingMillis > 0L && remainingMillis != 300_000L) "Resume" else "Start",
+                    color = Color(0xFF101522),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            }
+
+            OutlinedButton(
+                onClick = {
+                    isRunning = false
+                    val duration = readInputMillis() ?: 0L
+                    remainingMillis = duration
+                    showFinished = false
+                },
+                modifier = Modifier.weight(1f).height(54.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text("Reset", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(
+            "When the countdown reaches zero, an on-screen alert will appear. Keep MultiTool open to see the alert.",
+            color = SecondaryText,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+        )
+    }
+
+    if (showFinished) {
+        AlertDialog(
+            onDismissRequest = { showFinished = false },
+            containerColor = SurfaceDark,
+            title = { Text("Timer finished", color = Color.White) },
+            text = { Text("Your countdown has reached zero.", color = SecondaryText) },
+            confirmButton = {
+                TextButton(onClick = { showFinished = false }) {
+                    Text("OK", color = Accent)
+                }
+            }
         )
     }
 }
