@@ -102,7 +102,8 @@ private val tools = listOf(
     ToolItem("Screen Tester", "Test display and touch", "📱", "Phone Tools", Color(0xFF26C6DA)),
     ToolItem("Battery Ampere", "Live battery charge and discharge current", "🔋", "Phone Tools", Color(0xFF66BB6A)),
     ToolItem("Coin Toss", "Flip a coin: heads or tails", "🪙", "Calculators", Color(0xFFFFD54F)),
-    ToolItem("Dice Roll", "Roll a six-sided dice", "🎲", "Calculators", Color(0xFFAB80FF))
+    ToolItem("Dice Roll", "Roll a six-sided dice", "🎲", "Calculators", Color(0xFFAB80FF)),
+    ToolItem("Internet Speed", "Test download, upload and latency", "🌐", "Phone Tools", Color(0xFF26C6DA))
 )
 
 @Composable
@@ -225,7 +226,7 @@ fun MultiToolApp() {
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        "23 TOOLS AVAILABLE",
+                                        "24 TOOLS AVAILABLE",
                                         color = Color(0xFF80C8FF),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
@@ -313,6 +314,7 @@ fun MultiToolApp() {
                 "Battery Ampere" -> BatteryAmpereScreen(onBack = { selectedTool = null })
                 "Coin Toss" -> CoinTossScreen(onBack = { selectedTool = null })
                 "Dice Roll" -> DiceRollScreen(onBack = { selectedTool = null })
+                "Internet Speed" -> InternetSpeedScreen(onBack = { selectedTool = null })
                 "AR Measure" -> ARMeasureScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
@@ -4654,7 +4656,166 @@ fun BubbleLevelScreen(onBack: () -> Unit) {
 }
 
 
+
 @Composable
+fun InternetSpeedScreen(onBack: () -> Unit) {
+    var running by remember { mutableStateOf(false) }
+    var phase by remember { mutableStateOf("Ready to test your connection") }
+    var ping by remember { mutableStateOf("--") }
+    var down by remember { mutableStateOf("--") }
+    var up by remember { mutableStateOf("--") }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    suspend fun transfer(urlText: String, upload: Boolean): Double =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val payload = if (upload) ByteArray(2_000_000) { (it % 251).toByte() } else null
+            val url = java.net.URL(urlText + (if (urlText.contains("?")) "&" else "?") + "cacheBust=" + System.nanoTime())
+            val connection = (url.openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = if (upload) "POST" else "GET"
+                connectTimeout = 15000
+                readTimeout = 30000
+                useCaches = false
+                setRequestProperty("Cache-Control", "no-cache")
+                setRequestProperty("Accept-Encoding", "identity")
+                if (upload) {
+                    doOutput = true
+                    setFixedLengthStreamingMode(payload!!.size)
+                    setRequestProperty("Content-Type", "application/octet-stream")
+                }
+            }
+            try {
+                val start = System.nanoTime()
+                var bytes = 0L
+                if (upload) {
+                    connection.outputStream.use { it.write(payload!!) }
+                    bytes = payload!!.size.toLong()
+                } else {
+                    connection.inputStream.use { input ->
+                        val buffer = ByteArray(65536)
+                        while (true) {
+                            val n = input.read(buffer)
+                            if (n < 0) break
+                            bytes += n
+                        }
+                    }
+                }
+                val code = connection.responseCode
+                if (code !in 200..299 || bytes == 0L) throw IllegalStateException("Speed-test server returned HTTP " + code)
+                if (upload) connection.inputStream.use { input -> while (input.read() != -1) { } }
+                val seconds = (System.nanoTime() - start).toDouble() / 1_000_000_000.0
+                bytes * 8.0 / seconds / 1_000_000.0
+            } finally {
+                connection.disconnect()
+            }
+        }
+
+    suspend fun pingOnce(): Long = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val url = java.net.URL("https://speed.cloudflare.com/__down?bytes=1&cacheBust=" + System.nanoTime())
+        val connection = (url.openConnection() as java.net.HttpURLConnection).apply {
+            connectTimeout = 12000
+            readTimeout = 12000
+            useCaches = false
+            setRequestProperty("Cache-Control", "no-cache")
+        }
+        try {
+            val start = System.nanoTime()
+            connection.inputStream.use { input -> while (input.read() != -1) { } }
+            if (connection.responseCode !in 200..299) throw IllegalStateException("Latency request failed")
+            (System.nanoTime() - start) / 1_000_000L
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    fun formatted(value: Double) = String.format(java.util.Locale.US, "%.1f Mbps", value)
+
+    Column(Modifier.fillMaxSize().background(Background).verticalScroll(rememberScrollState()).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("‹", color = Color.White, fontSize = 32.sp,
+                modifier = Modifier.clickable { if (!running) onBack() }.padding(end = 14.dp))
+            Column {
+                Text("Internet Speed Test", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                Text("Check your current network performance", color = SecondaryText, fontSize = 13.sp)
+            }
+        }
+        Spacer(Modifier.height(26.dp))
+        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
+            Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("AVERAGE LATENCY", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text(ping, color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold)
+                Text("Ping / response time", color = SecondaryText, fontSize = 12.sp)
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Card(Modifier.weight(1f), shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("↓ DOWNLOAD", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    Text(down, color = Color(0xFF66BB6A), fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Card(Modifier.weight(1f), shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("↑ UPLOAD", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    Text(up, color = Color(0xFFFFB74D), fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        if (running) CircularProgressIndicator(color = Accent)
+        Spacer(Modifier.height(10.dp))
+        Text(phase, color = if (error == null) SecondaryText else Color(0xFFFF8A80), fontSize = 13.sp)
+        if (error != null) Text(error!!, color = Color(0xFFFF8A80), fontSize = 12.sp)
+        Spacer(Modifier.height(18.dp))
+        Button(onClick = {
+            if (!running) scope.launch {
+                running = true
+                error = null
+                ping = "--"; down = "--"; up = "--"
+                try {
+                    phase = "Measuring latency…"
+                    val samples = mutableListOf<Long>()
+                    repeat(3) { samples.add(pingOnce()) }
+                    ping = String.format(java.util.Locale.US, "%.0f ms", samples.average())
+                    phase = "Measuring download speed…"
+                    down = formatted(transfer("https://speed.cloudflare.com/__down?bytes=8000000", false))
+                    phase = "Measuring upload speed…"
+                    up = formatted(transfer("https://speed.cloudflare.com/__up", true))
+                    phase = "Test completed"
+                } catch (e: Exception) {
+                    phase = "Test could not be completed"
+                    error = e.message ?: "Check your internet connection and try again."
+                } finally { running = false }
+            }
+        }, enabled = !running, modifier = Modifier.fillMaxWidth().height(54.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Accent), shape = RoundedCornerShape(14.dp)) {
+            Text(if (running) "TESTING…" else "START SPEED TEST",
+                color = Color(0xFF101522), fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(16.dp))
+        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF172131))) {
+            Column(Modifier.padding(16.dp)) {
+                Text("About this test", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text("Uses Cloudflare's speed-test service. Each run transfers approximately 10 MB (8 MB download and 2 MB upload), plus small latency requests. Results vary with signal strength, congestion and server distance.",
+                    color = SecondaryText, fontSize = 12.sp, lineHeight = 18.sp)
+                Spacer(Modifier.height(8.dp))
+                Text("For a reliable result, pause downloads and VPNs and run the test more than once.",
+                    color = SecondaryText, fontSize = 12.sp, lineHeight = 18.sp)
+            }
+        }
+    }
+}
+
 fun BatteryAmpereScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val batteryManager = remember {
