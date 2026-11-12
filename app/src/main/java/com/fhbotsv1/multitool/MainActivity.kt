@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
@@ -98,7 +99,8 @@ private val tools = listOf(
     ToolItem("QR Scanner", "Scan QR codes and barcodes", "▦", "Phone Tools", Color(0xFF42A5F5)),
     ToolItem("Color Detector", "Identify colours using camera", "🎨", "Phone Tools", Color(0xFFAB80FF)),
     ToolItem("Screen Tester", "Test display and touch", "📱", "Phone Tools", Color(0xFF26C6DA)),
-    ToolItem("Battery Ampere", "Live battery charge and discharge current", "🔋", "Phone Tools", Color(0xFF66BB6A))
+    ToolItem("Battery Ampere", "Live battery charge and discharge current", "🔋", "Phone Tools", Color(0xFF66BB6A)),
+    ToolItem("Coin Toss", "Flip a coin: heads or tails", "🪙", "Calculators", Color(0xFFFFD54F))
 )
 
 @Composable
@@ -221,7 +223,7 @@ fun MultiToolApp() {
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        "21 TOOLS AVAILABLE",
+                                        "22 TOOLS AVAILABLE",
                                         color = Color(0xFF80C8FF),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
@@ -307,6 +309,7 @@ fun MultiToolApp() {
                 "Protractor" -> ProtractorScreen(onBack = { selectedTool = null })
                 "Bubble Level" -> BubbleLevelScreen(onBack = { selectedTool = null })
                 "Battery Ampere" -> BatteryAmpereScreen(onBack = { selectedTool = null })
+                "Coin Toss" -> CoinTossScreen(onBack = { selectedTool = null })
                 "AR Measure" -> ARMeasureScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
@@ -4783,5 +4786,126 @@ fun BatteryAmpereScreen(onBack: () -> Unit) {
             "The reading comes from the phone's battery-current sensor via Android. Some devices do not expose this value, and readings can fluctuate with screen use, temperature and charger behaviour. It is an estimate, not a calibrated power meter.",
             color = SecondaryText, fontSize = 12.sp
         )
+    }
+}
+
+
+@Composable
+fun CoinTossScreen(onBack: () -> Unit) {
+    val rotation = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    var isFlipping by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<String?>(null) }
+    var nextResult by remember { mutableStateOf("HEADS") }
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Background)
+            .verticalScroll(rememberScrollState()).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("‹", color = Color.White, fontSize = 32.sp,
+                modifier = Modifier.clickable { onBack() }.padding(end = 14.dp))
+            Column {
+                Text("Coin Toss", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                Text("A quick virtual coin flip", color = SecondaryText, fontSize = 13.sp)
+            }
+        }
+
+        Spacer(Modifier.height(42.dp))
+        Text("TAP THE COIN TO FLIP", color = SecondaryText, fontSize = 13.sp,
+            fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(24.dp))
+
+        Box(
+            modifier = Modifier
+                .size(220.dp)
+                .graphicsLayer {
+                    rotationY = rotation.value % 360f
+                    cameraDistance = 18f * density
+                }
+                .clip(RoundedCornerShape(120.dp))
+                .background(Color(0xFFD69A2D), RoundedCornerShape(120.dp))
+                .clickable(enabled = !isFlipping) {
+                    if (!isFlipping) {
+                        scope.launch {
+                            isFlipping = true
+                            result = null
+                            nextResult = if (kotlin.random.Random.nextBoolean()) "HEADS" else "TAILS"
+                            rotation.snapTo(0f)
+                            val finalAngle = 1800f + if (nextResult == "TAILS") 180f else 0f
+                            rotation.animateTo(
+                                targetValue = finalAngle,
+                                animationSpec = tween(durationMillis = 1200, easing = LinearEasing)
+                            )
+                            result = nextResult
+                            isFlipping = false
+                        }
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            val showingBack = (rotation.value % 360f) > 90f && (rotation.value % 360f) < 270f
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(12.dp)
+                    .background(Color(0xFFFFD66B), RoundedCornerShape(120.dp))
+                    .graphicsLayer { scaleX = if (showingBack) -1f else 1f },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    if (isFlipping) {
+                        if (showingBack) "TAILS" else "HEADS"
+                    } else {
+                        result ?: "FLIP"
+                    },
+                    color = Color(0xFF70420D),
+                    fontSize = 27.sp,
+                    fontWeight = FontWeight.Black
+                )
+                Text("✦", color = Color(0xFF9B6415), fontSize = 32.sp)
+            }
+        }
+
+        Spacer(Modifier.height(30.dp))
+        Text(
+            when {
+                isFlipping -> "Flipping…"
+                result != null -> "Result: $result"
+                else -> "Tap the coin to start"
+            },
+            color = if (result != null) Color(0xFFFFD166) else Color.White,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(12.dp))
+        Text("Each flip is random. Tap again for another toss.",
+            color = SecondaryText, fontSize = 13.sp)
+        Spacer(Modifier.height(28.dp))
+        Button(
+            onClick = {
+                if (!isFlipping) {
+                    scope.launch {
+                        isFlipping = true
+                        result = null
+                        nextResult = if (kotlin.random.Random.nextBoolean()) "HEADS" else "TAILS"
+                        rotation.snapTo(0f)
+                        val finalAngle = 1800f + if (nextResult == "TAILS") 180f else 0f
+                        rotation.animateTo(finalAngle, tween(1200, easing = LinearEasing))
+                        result = nextResult
+                        isFlipping = false
+                    }
+                }
+            },
+            enabled = !isFlipping,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Accent),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Text(if (isFlipping) "FLIPPING…" else "FLIP COIN",
+                color = Color(0xFF101522), fontWeight = FontWeight.Bold)
+        }
     }
 }
