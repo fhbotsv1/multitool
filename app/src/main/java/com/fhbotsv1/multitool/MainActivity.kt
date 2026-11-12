@@ -81,7 +81,6 @@ private val tools = listOf(
     ToolItem("Ruler", "Measure length on screen", "📏", "Measurement", Color(0xFFFFB74D)),
     ToolItem("Protractor", "Measure angles in degrees", "📐", "Measurement", Color(0xFFAB80FF)),
     ToolItem("AR Measure", "Camera-based measurements", "📷", "Measurement", Color(0xFF26C6DA)),
-    ToolItem("GPS Distance", "Measure distance travelled", "📍", "Measurement", Color(0xFFEC6C86)),
 
     ToolItem("Compass", "Find direction and heading", "🧭", "Sensors", Color(0xFF42A5F5)),
     ToolItem("Magnetic Detector", "Live magnetic field readings", "🧲", "Sensors", Color(0xFFEF5350)),
@@ -98,7 +97,8 @@ private val tools = listOf(
     ToolItem("Flashlight", "Torch, strobe and SOS", "🔦", "Phone Tools", Color(0xFFFFD54F)),
     ToolItem("QR Scanner", "Scan QR codes and barcodes", "▦", "Phone Tools", Color(0xFF42A5F5)),
     ToolItem("Color Detector", "Identify colours using camera", "🎨", "Phone Tools", Color(0xFFAB80FF)),
-    ToolItem("Screen Tester", "Test display and touch", "📱", "Phone Tools", Color(0xFF26C6DA))
+    ToolItem("Screen Tester", "Test display and touch", "📱", "Phone Tools", Color(0xFF26C6DA)),
+    ToolItem("Battery Ampere", "Live battery charge and discharge current", "🔋", "Phone Tools", Color(0xFF66BB6A))
 )
 
 @Composable
@@ -306,6 +306,7 @@ fun MultiToolApp() {
                 "Ruler" -> ScreenRulerScreen(onBack = { selectedTool = null })
                 "Protractor" -> ProtractorScreen(onBack = { selectedTool = null })
                 "Bubble Level" -> BubbleLevelScreen(onBack = { selectedTool = null })
+                "Battery Ampere" -> BatteryAmpereScreen(onBack = { selectedTool = null })
                 "AR Measure" -> ARMeasureScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
@@ -4641,6 +4642,145 @@ fun BubbleLevelScreen(onBack: () -> Unit) {
         )
         Text(
             "For best results, place the phone flat and still. Calibration sets the current position as zero; it does not correct the phone's physical sensor bias.",
+            color = SecondaryText, fontSize = 12.sp
+        )
+    }
+}
+
+
+@Composable
+fun BatteryAmpereScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val batteryManager = remember {
+        context.getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
+    }
+    var currentMicroAmps by remember { mutableLongStateOf(Long.MIN_VALUE) }
+    var batteryPercent by remember { mutableIntStateOf(-1) }
+    var batteryStatus by remember { mutableIntStateOf(-1) }
+    var updated by remember { mutableStateOf(false) }
+
+    LaunchedEffect(batteryManager) {
+        while (true) {
+            val current = runCatching {
+                batteryManager.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
+            }.getOrDefault(Int.MIN_VALUE)
+            currentMicroAmps = current.toLong()
+
+            val batteryIntent = context.registerReceiver(
+                null,
+                android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
+            )
+            if (batteryIntent != null) {
+                val level = batteryIntent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+                val scale = batteryIntent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100)
+                batteryPercent = if (level >= 0 && scale > 0) (level * 100 / scale) else -1
+                batteryStatus = batteryIntent.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+            }
+            updated = true
+            kotlinx.coroutines.delay(1000L)
+        }
+    }
+
+    val supported = currentMicroAmps != Int.MIN_VALUE.toLong()
+    val amps = if (supported) currentMicroAmps.toDouble() / 1_000_000.0 else 0.0
+    val charging = amps > 0.0005
+    val discharging = amps < -0.0005
+    val currentColor = when {
+        charging -> Color(0xFF66BB6A)
+        discharging -> Color(0xFFFF8A65)
+        else -> Color.White
+    }
+    val currentText = if (supported) {
+        String.format(java.util.Locale.US, "%+.3f A", amps)
+    } else {
+        "N/A"
+    }
+    val stateText = when {
+        !updated -> "Reading battery…"
+        !supported -> "Current measurement unavailable"
+        charging -> "CHARGING"
+        discharging -> "DISCHARGING"
+        batteryStatus == android.os.BatteryManager.BATTERY_STATUS_FULL -> "FULL"
+        batteryStatus == android.os.BatteryManager.BATTERY_STATUS_CHARGING -> "CONNECTED / IDLE"
+        else -> "IDLE"
+    }
+    val statusDetail = when (batteryStatus) {
+        android.os.BatteryManager.BATTERY_STATUS_CHARGING -> "Charger connected"
+        android.os.BatteryManager.BATTERY_STATUS_FULL -> "Battery fully charged"
+        android.os.BatteryManager.BATTERY_STATUS_DISCHARGING -> "Running on battery"
+        android.os.BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "Not charging"
+        else -> "Battery status"
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Background)
+            .verticalScroll(rememberScrollState()).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("‹", color = Color.White, fontSize = 32.sp,
+                modifier = Modifier.clickable { onBack() }.padding(end = 14.dp))
+            Column {
+                Text("Battery Ampere", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                Text("Live charging and discharge current", color = SecondaryText, fontSize = 13.sp)
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 30.dp, horizontal = 18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("BATTERY CURRENT", color = SecondaryText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(16.dp))
+                Text(currentText, color = currentColor, fontSize = 46.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(12.dp))
+                Text(stateText, color = currentColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text("Updates approximately every second", color = SecondaryText, fontSize = 12.sp)
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
+            Column(Modifier.fillMaxWidth().padding(18.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Battery level", color = SecondaryText, fontSize = 14.sp)
+                    Text(if (batteryPercent >= 0) "$batteryPercent%" else "—",
+                        color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(12.dp))
+                if (batteryPercent >= 0) {
+                    LinearProgressIndicator(
+                        progress = { batteryPercent / 100f },
+                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(8.dp)),
+                        color = Accent,
+                        trackColor = Color(0xFF334155)
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+                Text(statusDetail, color = Color.White, fontSize = 14.sp)
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
+            Column(Modifier.fillMaxWidth().padding(18.dp)) {
+                Text("How to read the value", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(10.dp))
+                Text("+ positive A  •  Battery charging", color = Color(0xFF66BB6A), fontSize = 14.sp)
+                Spacer(Modifier.height(6.dp))
+                Text("− negative A  •  Battery discharging", color = Color(0xFFFF8A65), fontSize = 14.sp)
+                Spacer(Modifier.height(6.dp))
+                Text("0.000 A  •  Very low current or idle", color = SecondaryText, fontSize = 14.sp)
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+        Text(
+            "The reading comes from the phone's battery-current sensor via Android. Some devices do not expose this value, and readings can fluctuate with screen use, temperature and charger behaviour. It is an estimate, not a calibrated power meter.",
             color = SecondaryText, fontSize = 12.sp
         )
     }
