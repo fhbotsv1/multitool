@@ -25,6 +25,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
@@ -46,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
@@ -104,7 +106,8 @@ private val tools = listOf(
     ToolItem("Coin Toss", "Flip a coin: heads or tails", "🪙", "Calculators", Color(0xFFFFD54F)),
     ToolItem("Dice Roll", "Roll a six-sided dice", "🎲", "Calculators", Color(0xFFAB80FF)),
     ToolItem("Internet Speed", "Test download, upload and latency", "🌐", "Phone Tools", Color(0xFF26C6DA)),
-    ToolItem("Battery Health", "View battery condition and details", "🩺", "Phone Tools", Color(0xFF66BB6A))
+    ToolItem("Battery Health", "View battery condition and details", "🩺", "Phone Tools", Color(0xFF66BB6A)),
+    ToolItem("Magnifier", "Magnify objects with the camera", "🔍", "Phone Tools", Color(0xFF42A5F5))
 )
 
 @Composable
@@ -227,7 +230,7 @@ fun MultiToolApp() {
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        "25 TOOLS AVAILABLE",
+                                        "26 TOOLS AVAILABLE",
                                         color = Color(0xFF80C8FF),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
@@ -317,6 +320,7 @@ fun MultiToolApp() {
                 "Dice Roll" -> DiceRollScreen(onBack = { selectedTool = null })
                 "Internet Speed" -> InternetSpeedScreen(onBack = { selectedTool = null })
                 "Battery Health" -> BatteryHealthScreen(onBack = { selectedTool = null })
+                "Magnifier" -> MagnifierScreen(onBack = { selectedTool = null })
                 "AR Measure" -> ARMeasureScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
@@ -4815,6 +4819,288 @@ fun InternetSpeedScreen(onBack: () -> Unit) {
                     color = SecondaryText, fontSize = 12.sp, lineHeight = 18.sp)
             }
         }
+    }
+}
+
+
+@Composable
+private fun MagnifierScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val lifecycleOwner = context as androidx.lifecycle.LifecycleOwner
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> hasCameraPermission = granted }
+
+    var previewView by remember { mutableStateOf<androidx.camera.view.PreviewView?>(null) }
+    var camera by remember { mutableStateOf<androidx.camera.core.Camera?>(null) }
+    var imageCapture by remember { mutableStateOf<androidx.camera.core.ImageCapture?>(null) }
+    var cameraError by remember { mutableStateOf<String?>(null) }
+    var zoomRatio by remember { mutableFloatStateOf(1f) }
+    var maxZoomRatio by remember { mutableFloatStateOf(1f) }
+    var torchOn by remember { mutableStateOf(false) }
+    var frozen by remember { mutableStateOf(false) }
+    var frozenBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var isCapturing by remember { mutableStateOf(false) }
+
+    LaunchedEffect(previewView, hasCameraPermission) {
+        val view = previewView
+        if (view != null && hasCameraPermission) {
+            try {
+                val providerFuture = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context)
+                providerFuture.addListener({
+                    try {
+                        val provider = providerFuture.get()
+                        val preview = androidx.camera.core.Preview.Builder().build().also {
+                            it.surfaceProvider = view.surfaceProvider
+                        }
+                        val capture = androidx.camera.core.ImageCapture.Builder()
+                            .setCaptureMode(androidx.camera.core.ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                            .build()
+                        provider.unbindAll()
+                        val boundCamera = provider.bindToLifecycle(
+                            lifecycleOwner,
+                            androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA,
+                            preview,
+                            capture
+                        )
+                        camera = boundCamera
+                        imageCapture = capture
+                        maxZoomRatio = boundCamera.cameraInfo.zoomState.value?.maxZoomRatio ?: 1f
+                        zoomRatio = 1f
+                        cameraError = null
+                    } catch (exception: Exception) {
+                        cameraError = exception.localizedMessage ?: "Unable to start the camera."
+                    }
+                }, ContextCompat.getMainExecutor(context))
+            } catch (exception: Exception) {
+                cameraError = exception.localizedMessage ?: "Camera is unavailable."
+            }
+        }
+    }
+
+    DisposableEffect(previewView, hasCameraPermission) {
+        onDispose {
+            runCatching { camera?.cameraControl?.enableTorch(false) }
+            runCatching {
+                androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context).get().unbindAll()
+            }
+            camera = null
+            imageCapture = null
+        }
+    }
+
+    val flashAvailable = camera?.cameraInfo?.hasFlashUnit() == true
+
+    fun captureFreezeFrame() {
+        val capture = imageCapture ?: run {
+            cameraError = "Camera is still starting. Please try again."
+            return
+        }
+        if (isCapturing) return
+        isCapturing = true
+        val photoFile = java.io.File(context.cacheDir, "magnifier_freeze_${System.currentTimeMillis()}.jpg")
+        val options = androidx.camera.core.ImageCapture.OutputFileOptions.Builder(photoFile).build()
+        capture.takePicture(
+            options,
+            ContextCompat.getMainExecutor(context),
+            object : androidx.camera.core.ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(output: androidx.camera.core.ImageCapture.OutputFileResults) {
+                    val bitmap = android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath)
+                    if (bitmap != null) {
+                        frozenBitmap = bitmap
+                        frozen = true
+                        cameraError = null
+                    } else {
+                        cameraError = "Could not load the captured image."
+                        photoFile.delete()
+                    }
+                    isCapturing = false
+                }
+
+                override fun onError(exception: androidx.camera.core.ImageCaptureException) {
+                    cameraError = exception.localizedMessage ?: "Unable to freeze the camera image."
+                    photoFile.delete()
+                    isCapturing = false
+                }
+            }
+        )
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Background)
+            .verticalScroll(rememberScrollState()).padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onBack) { Text("‹  Back", color = Accent) }
+            Spacer(Modifier.weight(1f))
+            Text("MAGNIFIER", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Text("Camera Magnifier", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Text("Enlarge small text and nearby details", color = SecondaryText, fontSize = 13.sp)
+        Spacer(Modifier.height(16.dp))
+
+        if (hasCameraPermission) {
+            Box(
+                modifier = Modifier.fillMaxWidth().height(390.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
+            ) {
+                if (frozen && frozenBitmap != null) {
+                    Image(
+                        bitmap = frozenBitmap!!.asImageBitmap(),
+                        contentDescription = "Frozen magnifier image",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                    )
+                    Text(
+                        "FROZEN",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.align(Alignment.TopEnd).padding(12.dp)
+                            .background(Color(0xCC101522), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                } else {
+                    AndroidView(
+                        factory = { viewContext ->
+                            androidx.camera.view.PreviewView(viewContext).apply {
+                                scaleType = androidx.camera.view.PreviewView.ScaleType.FILL_CENTER
+                                implementationMode = androidx.camera.view.PreviewView.ImplementationMode.COMPATIBLE
+                                previewView = this
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    if (camera == null) {
+                        CircularProgressIndicator(color = Accent)
+                    }
+                }
+            }
+        } else {
+            Card(
+                modifier = Modifier.fillMaxWidth().height(230.dp),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(20.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Camera access is required for the magnifier.", color = Color.White)
+                    Spacer(Modifier.height(14.dp))
+                    Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
+                        Text("Grant camera access")
+                    }
+                }
+            }
+        }
+
+        cameraError?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(it, color = Color(0xFFFFB74D), fontSize = 12.sp)
+        }
+
+        Spacer(Modifier.height(18.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Zoom", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(String.format(java.util.Locale.US, "%.1f×", zoomRatio),
+                        color = Accent, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                }
+                Slider(
+                    value = zoomRatio.coerceIn(1f, maxZoomRatio.coerceAtLeast(1f)),
+                    onValueChange = { value ->
+                        zoomRatio = value
+                        camera?.cameraControl?.setZoomRatio(value)
+                    },
+                    valueRange = 1f..maxZoomRatio.coerceAtLeast(1.01f),
+                    enabled = hasCameraPermission && camera != null && maxZoomRatio > 1f
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("1×", color = SecondaryText, fontSize = 11.sp)
+                    Text("${String.format(java.util.Locale.US, "%.1f", maxZoomRatio)}× maximum", color = SecondaryText, fontSize = 11.sp)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Button(
+                onClick = {
+                    if (frozen) {
+                        frozen = false
+                        frozenBitmap = null
+                    } else {
+                        captureFreezeFrame()
+                    }
+                },
+                enabled = hasCameraPermission && camera != null && !isCapturing,
+                modifier = Modifier.weight(1f).height(52.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Text(
+                    when {
+                        isCapturing -> "Capturing…"
+                        frozen -> "Resume Live"
+                        else -> "Freeze Frame"
+                    },
+                    color = Color(0xFF101522), fontWeight = FontWeight.Bold
+                )
+            }
+            OutlinedButton(
+                onClick = {
+                    val next = !torchOn
+                    camera?.cameraControl?.enableTorch(next)
+                    torchOn = next
+                },
+                enabled = hasCameraPermission && camera != null && flashAvailable && !frozen,
+                modifier = Modifier.weight(1f).height(52.dp),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Text(if (torchOn) "Flashlight ON" else "Flashlight OFF", color = Color.White)
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "Use the zoom slider for live magnification. Freeze Frame captures a temporary still image in app cache; Resume Live returns to the camera. Flashlight is available only when the rear camera supports flash.",
+            color = SecondaryText, fontSize = 12.sp, lineHeight = 18.sp
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Magnification and image clarity depend on the phone camera and lighting. Digital zoom enlarges the image but cannot restore detail that the camera has not captured.",
+            color = SecondaryText, fontSize = 12.sp, lineHeight = 18.sp
+        )
     }
 }
 
