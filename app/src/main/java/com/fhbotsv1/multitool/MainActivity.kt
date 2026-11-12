@@ -19,6 +19,7 @@ import android.os.SystemClock
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
@@ -115,6 +116,11 @@ fun MultiToolApp() {
     val context = LocalContext.current
     var selectedTab by remember { mutableIntStateOf(0) }
     var selectedTool by remember { mutableStateOf<ToolItem?>(null) }
+
+    // Support Android's system Back button and left-edge swipe while a tool is open.
+    BackHandler(enabled = selectedTool != null) {
+        selectedTool = null
+    }
     val preferences = remember(context) {
         context.getSharedPreferences("multitool_preferences", Context.MODE_PRIVATE)
     }
