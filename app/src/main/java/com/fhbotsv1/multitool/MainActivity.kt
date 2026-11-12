@@ -103,7 +103,8 @@ private val tools = listOf(
     ToolItem("Battery Ampere", "Live battery charge and discharge current", "🔋", "Phone Tools", Color(0xFF66BB6A)),
     ToolItem("Coin Toss", "Flip a coin: heads or tails", "🪙", "Calculators", Color(0xFFFFD54F)),
     ToolItem("Dice Roll", "Roll a six-sided dice", "🎲", "Calculators", Color(0xFFAB80FF)),
-    ToolItem("Internet Speed", "Test download, upload and latency", "🌐", "Phone Tools", Color(0xFF26C6DA))
+    ToolItem("Internet Speed", "Test download, upload and latency", "🌐", "Phone Tools", Color(0xFF26C6DA)),
+    ToolItem("Battery Health", "View battery condition and details", "🩺", "Phone Tools", Color(0xFF66BB6A))
 )
 
 @Composable
@@ -226,7 +227,7 @@ fun MultiToolApp() {
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        "24 TOOLS AVAILABLE",
+                                        "25 TOOLS AVAILABLE",
                                         color = Color(0xFF80C8FF),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
@@ -315,6 +316,7 @@ fun MultiToolApp() {
                 "Coin Toss" -> CoinTossScreen(onBack = { selectedTool = null })
                 "Dice Roll" -> DiceRollScreen(onBack = { selectedTool = null })
                 "Internet Speed" -> InternetSpeedScreen(onBack = { selectedTool = null })
+                "Battery Health" -> BatteryHealthScreen(onBack = { selectedTool = null })
                 "AR Measure" -> ARMeasureScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
@@ -4816,7 +4818,176 @@ fun InternetSpeedScreen(onBack: () -> Unit) {
     }
 }
 
+
 @Composable
+fun BatteryHealthScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val batteryManager = remember {
+        context.getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
+    }
+    var level by remember { mutableIntStateOf(-1) }
+    var health by remember { mutableIntStateOf(-1) }
+    var status by remember { mutableIntStateOf(-1) }
+    var temperature by remember { mutableIntStateOf(-1) }
+    var voltage by remember { mutableIntStateOf(-1) }
+    var plugged by remember { mutableIntStateOf(0) }
+    var technology by remember { mutableStateOf("—") }
+    var chargeCounter by remember { mutableLongStateOf(Long.MIN_VALUE) }
+    var lastUpdated by remember { mutableStateOf("Reading battery information…") }
+
+    LaunchedEffect(batteryManager) {
+        while (true) {
+            val intent = context.registerReceiver(
+                null,
+                android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
+            )
+            if (intent != null) {
+                val newLevel = intent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+                val scale = intent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100)
+                level = if (newLevel >= 0 && scale > 0) newLevel * 100 / scale else -1
+                health = intent.getIntExtra(android.os.BatteryManager.EXTRA_HEALTH, -1)
+                status = intent.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+                temperature = intent.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, -1)
+                voltage = intent.getIntExtra(android.os.BatteryManager.EXTRA_VOLTAGE, -1)
+                plugged = intent.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0)
+                technology = intent.getStringExtra(android.os.BatteryManager.EXTRA_TECHNOLOGY) ?: "Not reported"
+            }
+            chargeCounter = runCatching {
+                batteryManager.getLongProperty(android.os.BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER)
+            }.getOrDefault(Long.MIN_VALUE)
+            lastUpdated = "Updated just now"
+            kotlinx.coroutines.delay(3000L)
+        }
+    }
+
+    val healthText = when (health) {
+        android.os.BatteryManager.BATTERY_HEALTH_GOOD -> "Good"
+        android.os.BatteryManager.BATTERY_HEALTH_OVERHEAT -> "Overheating"
+        android.os.BatteryManager.BATTERY_HEALTH_DEAD -> "Dead"
+        android.os.BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "Over voltage"
+        android.os.BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE -> "Unspecified failure"
+        android.os.BatteryManager.BATTERY_HEALTH_COLD -> "Too cold"
+        else -> "Not reported"
+    }
+    val healthColor = when (health) {
+        android.os.BatteryManager.BATTERY_HEALTH_GOOD -> Color(0xFF66BB6A)
+        android.os.BatteryManager.BATTERY_HEALTH_OVERHEAT,
+        android.os.BatteryManager.BATTERY_HEALTH_DEAD,
+        android.os.BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE,
+        android.os.BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE,
+        android.os.BatteryManager.BATTERY_HEALTH_COLD -> Color(0xFFFF8A65)
+        else -> SecondaryText
+    }
+    val statusText = when (status) {
+        android.os.BatteryManager.BATTERY_STATUS_CHARGING -> "Charging"
+        android.os.BatteryManager.BATTERY_STATUS_DISCHARGING -> "Discharging"
+        android.os.BatteryManager.BATTERY_STATUS_FULL -> "Fully charged"
+        android.os.BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "Not charging"
+        android.os.BatteryManager.BATTERY_STATUS_UNKNOWN -> "Unknown"
+        else -> "—"
+    }
+    val powerSource = when (plugged) {
+        android.os.BatteryManager.BATTERY_PLUGGED_AC -> "AC adapter"
+        android.os.BatteryManager.BATTERY_PLUGGED_USB -> "USB"
+        android.os.BatteryManager.BATTERY_PLUGGED_WIRELESS -> "Wireless"
+        0 -> "Battery"
+        else -> "External power"
+    }
+    val chargeText = if (chargeCounter != Long.MIN_VALUE && chargeCounter >= 0L) {
+        String.format(java.util.Locale.US, "%.0f mAh", chargeCounter / 1000.0)
+    } else {
+        "Not supported by device"
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Background)
+            .verticalScroll(rememberScrollState()).padding(20.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("‹", color = Color.White, fontSize = 32.sp,
+                modifier = Modifier.clickable { onBack() }.padding(end = 14.dp))
+            Column {
+                Text("Battery Health", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                Text("Battery condition and live information", color = SecondaryText, fontSize = 13.sp)
+            }
+        }
+
+        Spacer(Modifier.height(22.dp))
+        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
+            Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("REPORTED BATTERY CONDITION", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(12.dp))
+                Text(healthText.uppercase(), color = healthColor, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text("Android battery-health status", color = SecondaryText, fontSize = 12.sp)
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
+            Column(Modifier.fillMaxWidth().padding(18.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text("Battery level", color = SecondaryText, fontSize = 14.sp)
+                    Text(if (level >= 0) "$level%" else "—", color = Color.White,
+                        fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(12.dp))
+                if (level >= 0) {
+                    LinearProgressIndicator(
+                        progress = { level / 100f },
+                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(8.dp)),
+                        color = Accent, trackColor = Color(0xFF334155)
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+                BatteryInfoRow("Temperature", if (temperature >= 0)
+                    String.format(java.util.Locale.US, "%.1f °C", temperature / 10.0) else "—")
+                BatteryInfoRow("Voltage", if (voltage > 0)
+                    String.format(java.util.Locale.US, "%.2f V", voltage / 1000.0) else "—")
+                BatteryInfoRow("Charging status", statusText)
+                BatteryInfoRow("Power source", powerSource)
+                BatteryInfoRow("Battery technology", technology)
+                BatteryInfoRow("Charge counter", chargeText)
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF172131))) {
+            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                Text("About battery health", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "“Good” is the health status reported by Android; it is not a battery-capacity percentage. Android does not provide a standard remaining-capacity or design-capacity reading on all phones. Charge counter is the current remaining charge estimate, not the battery's original capacity.",
+                    color = SecondaryText, fontSize = 12.sp, lineHeight = 18.sp
+                )
+                Spacer(Modifier.height(8.dp))
+                Text("Values refresh approximately every 3 seconds. Some details may be unavailable depending on the phone manufacturer.",
+                    color = SecondaryText, fontSize = 12.sp, lineHeight = 18.sp)
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(lastUpdated, color = SecondaryText, fontSize = 11.sp)
+    }
+}
+
+@Composable
+private fun BatteryInfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = SecondaryText, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        Spacer(Modifier.width(12.dp))
+        Text(value, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+ @Composable
 fun BatteryAmpereScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val batteryManager = remember {
