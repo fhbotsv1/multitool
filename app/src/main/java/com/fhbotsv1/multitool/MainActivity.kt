@@ -80,46 +80,61 @@ data class ToolItem(
 )
 
 private val tools = listOf(
-    ToolItem("Speedometer", "Live GPS speed", "🚗", "Measurement", Color(0xFF42A5F5)),
-    ToolItem("Bubble Level", "Check horizontal and vertical level", "🫧", "Measurement", Color(0xFF66BB6A)),
-    ToolItem("Ruler", "Measure length on screen", "📏", "Measurement", Color(0xFFFFB74D)),
-    ToolItem("Protractor", "Measure angles in degrees", "📐", "Measurement", Color(0xFFAB80FF)),
-    ToolItem("AR Measure", "Camera-based measurements", "📷", "Measurement", Color(0xFF26C6DA)),
-
+    // Sensors
     ToolItem("Compass", "Find direction and heading", "🧭", "Sensors", Color(0xFF42A5F5)),
     ToolItem("Magnetic Detector", "Live magnetic field readings", "🧲", "Sensors", Color(0xFFEF5350)),
-    ToolItem("Metal Detector", "Detect magnetic metal objects", "🔩", "Sensors", Color(0xFFFFA726)),
     ToolItem("Light Meter", "Measure ambient light in lux", "💡", "Sensors", Color(0xFFFFD54F)),
     ToolItem("Sound Meter", "Measure sound levels", "🔊", "Sensors", Color(0xFF26C6DA)),
     ToolItem("Barometer", "Measure atmospheric pressure", "🌡️", "Sensors", Color(0xFF66BB6A)),
     ToolItem("Vibration Meter", "Measure device acceleration", "📳", "Sensors", Color(0xFFAB80FF)),
+    ToolItem("Battery Ampere", "Live battery charge and discharge current", "🔋", "Sensors", Color(0xFF66BB6A)),
 
-    ToolItem("Stopwatch", "Precision time measurement", "⏱️", "Calculators", Color(0xFF42A5F5)),
-    ToolItem("Timer", "Countdown timer", "⏳", "Calculators", Color(0xFFFFB74D)),
-    ToolItem("Unit Converter", "Convert units and measurements", "🔄", "Calculators", Color(0xFF66BB6A)),
+    // Measures
+    ToolItem("Bubble Level", "Check horizontal and vertical level", "🫧", "Measures", Color(0xFF66BB6A)),
+    ToolItem("Ruler", "Measure length on screen", "📏", "Measures", Color(0xFFFFB74D)),
+    ToolItem("Protractor", "Measure angles in degrees", "📐", "Measures", Color(0xFFAB80FF)),
+    ToolItem("AR Measure", "Camera-based measurements", "📷", "Measures", Color(0xFF26C6DA)),
+    ToolItem("Stopwatch", "Precision time measurement", "⏱️", "Measures", Color(0xFF42A5F5)),
+    ToolItem("Color Detector", "Identify colours using camera", "🎨", "Measures", Color(0xFFAB80FF)),
+    ToolItem("Internet Speed", "Test download, upload and latency", "🌐", "Measures", Color(0xFF26C6DA)),
 
-    ToolItem("Flashlight", "Torch, strobe and SOS", "🔦", "Phone Tools", Color(0xFFFFD54F)),
-    ToolItem("QR Scanner", "Scan QR codes and barcodes", "▦", "Phone Tools", Color(0xFF42A5F5)),
-    ToolItem("Color Detector", "Identify colours using camera", "🎨", "Phone Tools", Color(0xFFAB80FF)),
-    ToolItem("Screen Tester", "Test display and touch", "📱", "Phone Tools", Color(0xFF26C6DA)),
-    ToolItem("Battery Ampere", "Live battery charge and discharge current", "🔋", "Phone Tools", Color(0xFF66BB6A)),
-    ToolItem("Coin Toss", "Flip a coin: heads or tails", "🪙", "Calculators", Color(0xFFFFD54F)),
-    ToolItem("Dice Roll", "Roll a six-sided dice", "🎲", "Calculators", Color(0xFFAB80FF)),
-    ToolItem("Internet Speed", "Test download, upload and latency", "🌐", "Phone Tools", Color(0xFF26C6DA)),
-    ToolItem("Battery Health", "View battery condition and details", "🩺", "Phone Tools", Color(0xFF66BB6A)),
-    ToolItem("Magnifier", "Magnify objects with the camera", "🔍", "Phone Tools", Color(0xFF42A5F5))
+    // More
+    ToolItem("Speedometer", "Live GPS speed", "🚗", "More", Color(0xFF42A5F5)),
+    ToolItem("Timer", "Countdown timer", "⏳", "More", Color(0xFFFFB74D)),
+    ToolItem("Unit Converter", "Convert units and measurements", "🔄", "More", Color(0xFF66BB6A)),
+    ToolItem("Flashlight", "Torch, strobe and SOS", "🔦", "More", Color(0xFFFFD54F)),
+    ToolItem("QR Scanner", "Scan QR codes and barcodes", "▦", "More", Color(0xFF42A5F5)),
+    ToolItem("Coin Toss", "Flip a coin: heads or tails", "🪙", "More", Color(0xFFFFD54F)),
+    ToolItem("Dice Roll", "Roll a six-sided dice", "🎲", "More", Color(0xFFAB80FF)),
+    ToolItem("Battery Health", "View battery condition and details", "🩺", "More", Color(0xFF66BB6A)),
+    ToolItem("Magnifier", "Magnify objects with the camera", "🔍", "More", Color(0xFF42A5F5))
 )
 
 @Composable
 fun MultiToolApp() {
+    val context = LocalContext.current
     var selectedTab by remember { mutableIntStateOf(0) }
     var selectedTool by remember { mutableStateOf<ToolItem?>(null) }
+    val preferences = remember(context) {
+        context.getSharedPreferences("multitool_preferences", Context.MODE_PRIVATE)
+    }
+    var favoriteNames by remember {
+        mutableStateOf(preferences.getStringSet("favorite_tools", emptySet())?.toSet() ?: emptySet())
+    }
+
+    fun toggleFavorite(tool: ToolItem) {
+        val updated = favoriteNames.toMutableSet().apply {
+            if (!add(tool.name)) remove(tool.name)
+        }
+        favoriteNames = updated
+        preferences.edit().putStringSet("favorite_tools", updated).apply()
+    }
 
     val visibleTools = when (selectedTab) {
+        0 -> tools.filter { it.name in favoriteNames }
         1 -> tools.filter { it.category == "Sensors" }
-        2 -> tools.filter { it.category == "Measurement" }
-        3 -> tools.filter { it.category == "Calculators" || it.category == "Phone Tools" }
-        else -> tools
+        2 -> tools.filter { it.category == "Measures" }
+        else -> tools.filter { it.category == "More" }
     }
 
     MaterialTheme(
@@ -137,11 +152,10 @@ fun MultiToolApp() {
                     contentColor = Color.White
                 ) {
                     val navItems = listOf(
-                        "Home" to "⌂",
+                        "Favorites" to "★",
                         "Sensors" to "◉",
-                        "Measure" to "📐",
-                        "More" to "▦",
-                        "Settings" to "⚙"
+                        "Measures" to "📐",
+                        "More" to "▦"
                     )
 
                     navItems.forEachIndexed { index, item ->
@@ -173,10 +187,7 @@ fun MultiToolApp() {
                     .padding(padding)
                     .background(Background)
             ) {
-                if (selectedTab == 4) {
-                    SettingsScreen()
-                } else {
-                    Column(
+                Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 20.dp, vertical = 20.dp)
@@ -230,7 +241,7 @@ fun MultiToolApp() {
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        "26 TOOLS AVAILABLE",
+                                        "${tools.size} TOOLS AVAILABLE",
                                         color = Color(0xFF80C8FF),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
@@ -251,10 +262,10 @@ fun MultiToolApp() {
 
                         Text(
                             when (selectedTab) {
+                                0 -> "Favorite Tools"
                                 1 -> "Sensor Tools"
                                 2 -> "Measurement Tools"
-                                3 -> "More Tools"
-                                else -> "Explore Tools"
+                                else -> "More Tools"
                             },
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
@@ -263,35 +274,53 @@ fun MultiToolApp() {
 
                         Text(
                             when (selectedTab) {
+                                0 -> "Your personal quick-access tools"
                                 1 -> "Explore your phone's built-in sensors"
                                 2 -> "Measure the world around you"
-                                3 -> "Calculators and everyday phone utilities"
-                                else -> "Choose a tool to get started"
+                                else -> "Calculators and everyday phone utilities"
                             },
                             fontSize = 12.sp,
                             color = SecondaryText
                         )
                     }
 
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(
-                            start = 16.dp,
-                            end = 16.dp,
-                            bottom = 20.dp
-                        ),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(visibleTools) { tool ->
-                            ToolCard(
-                                tool = tool,
-                                onClick = { selectedTool = tool }
-                            )
+                    if (visibleTools.isEmpty()) {
+                        Column(
+                            modifier = Modifier.fillMaxSize().padding(28.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text("☆", color = Accent, fontSize = 54.sp)
+                            Spacer(Modifier.height(12.dp))
+                            Text("No favorites yet", color = Color.White,
+                                fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(6.dp))
+                            Text("Tap the star on any tool in Sensors, Measures or More to add it here.",
+                                color = SecondaryText, fontSize = 13.sp,
+                                lineHeight = 19.sp)
+                        }
+                    } else {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(2),
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(
+                                start = 16.dp,
+                                end = 16.dp,
+                                bottom = 20.dp
+                            ),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(visibleTools) { tool ->
+                                ToolCard(
+                                    tool = tool,
+                                    isFavorite = tool.name in favoriteNames,
+                                    onToggleFavorite = { toggleFavorite(tool) },
+                                    onClick = { selectedTool = tool }
+                                )
+                            }
                         }
                     }
-                }
             }
         }
 
@@ -300,7 +329,6 @@ fun MultiToolApp() {
                 "Speedometer" -> SpeedometerScreen(onBack = { selectedTool = null })
                 "Compass" -> CompassScreen(onBack = { selectedTool = null })
                 "Magnetic Detector" -> MagneticFieldScreen(onBack = { selectedTool = null })
-                "Metal Detector" -> MetalDetectorScreen(onBack = { selectedTool = null })
                 "Light Meter" -> LightMeterScreen(onBack = { selectedTool = null })
                 "Sound Meter" -> SoundMeterScreen(onBack = { selectedTool = null })
                 "Barometer" -> BarometerScreen(onBack = { selectedTool = null })
@@ -311,7 +339,6 @@ fun MultiToolApp() {
                 "Flashlight" -> FlashlightScreen(onBack = { selectedTool = null })
                 "QR Scanner" -> QrScannerScreen(onBack = { selectedTool = null })
                 "Color Detector" -> ColorDetectorScreen(onBack = { selectedTool = null })
-                "Screen Tester" -> ScreenTesterScreen(onBack = { selectedTool = null })
                 "Ruler" -> ScreenRulerScreen(onBack = { selectedTool = null })
                 "Protractor" -> ProtractorScreen(onBack = { selectedTool = null })
                 "Bubble Level" -> BubbleLevelScreen(onBack = { selectedTool = null })
@@ -353,6 +380,8 @@ fun MultiToolApp() {
 @Composable
 fun ToolCard(
     tool: ToolItem,
+    isFavorite: Boolean,
+    onToggleFavorite: () -> Unit,
     onClick: () -> Unit
 ) {
     Card(
@@ -371,16 +400,30 @@ fun ToolCard(
                 .padding(14.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .background(
-                        tool.color.copy(alpha = 0.15f),
-                        RoundedCornerShape(13.dp)
-                    ),
-                contentAlignment = Alignment.Center
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(tool.emoji, fontSize = 23.sp)
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .background(
+                            tool.color.copy(alpha = 0.15f),
+                            RoundedCornerShape(13.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(tool.emoji, fontSize = 23.sp)
+                }
+                Spacer(Modifier.weight(1f))
+                Text(
+                    if (isFavorite) "★" else "☆",
+                    color = if (isFavorite) Color(0xFFFFD166) else SecondaryText,
+                    fontSize = 27.sp,
+                    modifier = Modifier
+                        .clickable(onClick = onToggleFavorite)
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                )
             }
 
             Column {
