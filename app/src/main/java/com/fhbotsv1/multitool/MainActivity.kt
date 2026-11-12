@@ -4816,6 +4816,7 @@ fun InternetSpeedScreen(onBack: () -> Unit) {
     }
 }
 
+@Composable
 fun BatteryAmpereScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val batteryManager = remember {
