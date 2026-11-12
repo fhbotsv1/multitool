@@ -101,7 +101,8 @@ private val tools = listOf(
     ToolItem("Color Detector", "Identify colours using camera", "🎨", "Phone Tools", Color(0xFFAB80FF)),
     ToolItem("Screen Tester", "Test display and touch", "📱", "Phone Tools", Color(0xFF26C6DA)),
     ToolItem("Battery Ampere", "Live battery charge and discharge current", "🔋", "Phone Tools", Color(0xFF66BB6A)),
-    ToolItem("Coin Toss", "Flip a coin: heads or tails", "🪙", "Calculators", Color(0xFFFFD54F))
+    ToolItem("Coin Toss", "Flip a coin: heads or tails", "🪙", "Calculators", Color(0xFFFFD54F)),
+    ToolItem("Dice Roll", "Roll a six-sided dice", "🎲", "Calculators", Color(0xFFAB80FF))
 )
 
 @Composable
@@ -224,7 +225,7 @@ fun MultiToolApp() {
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        "22 TOOLS AVAILABLE",
+                                        "23 TOOLS AVAILABLE",
                                         color = Color(0xFF80C8FF),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
@@ -311,6 +312,7 @@ fun MultiToolApp() {
                 "Bubble Level" -> BubbleLevelScreen(onBack = { selectedTool = null })
                 "Battery Ampere" -> BatteryAmpereScreen(onBack = { selectedTool = null })
                 "Coin Toss" -> CoinTossScreen(onBack = { selectedTool = null })
+                "Dice Roll" -> DiceRollScreen(onBack = { selectedTool = null })
                 "AR Measure" -> ARMeasureScreen(onBack = { selectedTool = null })
                 else -> AlertDialog(
                 onDismissRequest = { selectedTool = null },
@@ -4906,6 +4908,117 @@ fun CoinTossScreen(onBack: () -> Unit) {
             shape = RoundedCornerShape(14.dp)
         ) {
             Text(if (isFlipping) "FLIPPING…" else "FLIP COIN",
+                color = Color(0xFF101522), fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+
+@Composable
+fun DiceRollScreen(onBack: () -> Unit) {
+    val rotation = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    var isRolling by remember { mutableStateOf(false) }
+    var diceValue by remember { mutableIntStateOf(1) }
+    var hasRolled by remember { mutableStateOf(false) }
+
+    val pipPositions = when (diceValue) {
+        1 -> listOf(Offset(0.5f, 0.5f))
+        2 -> listOf(Offset(0.25f, 0.25f), Offset(0.75f, 0.75f))
+        3 -> listOf(Offset(0.25f, 0.25f), Offset(0.5f, 0.5f), Offset(0.75f, 0.75f))
+        4 -> listOf(Offset(0.25f, 0.25f), Offset(0.75f, 0.25f),
+            Offset(0.25f, 0.75f), Offset(0.75f, 0.75f))
+        5 -> listOf(Offset(0.25f, 0.25f), Offset(0.75f, 0.25f),
+            Offset(0.5f, 0.5f), Offset(0.25f, 0.75f), Offset(0.75f, 0.75f))
+        else -> listOf(Offset(0.25f, 0.2f), Offset(0.75f, 0.2f),
+            Offset(0.25f, 0.5f), Offset(0.75f, 0.5f),
+            Offset(0.25f, 0.8f), Offset(0.75f, 0.8f))
+    }
+
+    fun rollDice() {
+        if (isRolling) return
+        scope.launch {
+            isRolling = true
+            hasRolled = false
+            val result = kotlin.random.Random.nextInt(1, 7)
+            rotation.snapTo(0f)
+            rotation.animateTo(
+                targetValue = 1080f + kotlin.random.Random.nextInt(0, 4) * 90f,
+                animationSpec = tween(durationMillis = 1000, easing = LinearEasing)
+            )
+            diceValue = result
+            hasRolled = true
+            isRolling = false
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Background)
+            .verticalScroll(rememberScrollState()).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("‹", color = Color.White, fontSize = 32.sp,
+                modifier = Modifier.clickable { onBack() }.padding(end = 14.dp))
+            Column {
+                Text("Dice Roll", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                Text("Roll a virtual six-sided dice", color = SecondaryText, fontSize = 13.sp)
+            }
+        }
+
+        Spacer(Modifier.height(42.dp))
+        Text("TAP THE DICE TO ROLL", color = SecondaryText, fontSize = 13.sp,
+            fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(28.dp))
+
+        Box(
+            modifier = Modifier
+                .size(220.dp)
+                .graphicsLayer {
+                    rotationZ = rotation.value
+                    scaleX = if (isRolling) 0.88f else 1f
+                    scaleY = if (isRolling) 0.88f else 1f
+                }
+                .clip(RoundedCornerShape(34.dp))
+                .background(Color(0xFFF4F6FA), RoundedCornerShape(34.dp))
+                .clickable(enabled = !isRolling) { rollDice() },
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize().padding(22.dp)) {
+                val dotRadius = size.minDimension * 0.075f
+                pipPositions.forEach { position ->
+                    drawCircle(
+                        color = Color(0xFF172033),
+                        radius = dotRadius,
+                        center = Offset(size.width * position.x, size.height * position.y)
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(30.dp))
+        Text(
+            when {
+                isRolling -> "Rolling…"
+                hasRolled -> "You rolled: $diceValue"
+                else -> "Tap the dice to start"
+            },
+            color = if (hasRolled) Color(0xFFFFD166) else Color.White,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(12.dp))
+        Text("Every roll is random. The dice has six possible outcomes.",
+            color = SecondaryText, fontSize = 13.sp)
+        Spacer(Modifier.height(28.dp))
+        Button(
+            onClick = { rollDice() },
+            enabled = !isRolling,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Accent),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Text(if (isRolling) "ROLLING…" else "ROLL DICE",
                 color = Color(0xFF101522), fontWeight = FontWeight.Bold)
         }
     }
